@@ -42,6 +42,30 @@ class AgentToolboxTest < Minitest::Test
                                 runner: @runner, writable: writable, **rest)
   end
 
+  # --- files that belong to tasks still to come (a field run's agent wrote them, and their tasks had nothing to do) ---
+
+  def test_files_of_later_tasks_are_refused_for_write_edit_and_delete
+    t = box(planned: ["src/lib/price.ts"], deletable: ["src/lib/tax.ts"], reserved: { "src/lib/tax.ts" => "T3", "src/new.ts" => "T4" })
+    assert_match(/error: src\/new\.ts belongs to task T4, later in the plan/, plain(t.call("write_file", { "path" => "src/new.ts", "content" => "x
+" })))
+    assert_match(/belongs to task T3/, plain(t.call("edit_file", { "path" => "src/lib/tax.ts", "search" => "x", "replace" => "y" })))
+    assert_match(/belongs to task T3/, plain(t.call("delete_file", { "path" => "src/lib/tax.ts" })))
+    assert_match(/belongs to task T4/, plain(t.call("write_file", { "path" => "./src/../src/new.ts", "content" => "x
+" })), "the path is normalized first")
+    refute exists?("src/new.ts")
+    assert exists?("src/lib/tax.ts")
+    assert_empty t.touched
+  end
+
+  def test_a_file_two_tasks_plan_may_be_written_by_the_first
+    t = box(planned: ["src/new.ts"], reserved: { "src/new.ts" => "T2" })
+    assert_match(/written/, plain(t.call("write_file", { "path" => "src/new.ts", "content" => "export const x = 1;
+" })))
+    other = box(planned: [], reserved: { "src/new.ts" => "T2" })
+    assert_match(/written/, plain(other.call("write_file", { "path" => "src/helper.ts", "content" => "export const y = 1;
+" })), "a file no task plans is still allowed")
+  end
+
   # --- delete_file: the rules writes obey, and only files the task declares ---
 
   def exists?(rel) = File.exist?(File.join(@root, rel))

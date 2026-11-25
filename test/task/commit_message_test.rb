@@ -45,6 +45,13 @@ class CommitMessageTest < Minitest::Test
     assert_equal "Commit by some-model from vb-harness 9.9.9. 2 checks passed (typecheck, build)", msg.lines.last
   end
 
+  def test_one_passed_check_is_not_plural
+    one = M.build(task: task(type: "fix"), template: "{checks} checks passed, {checks} gates ran", model: "m", version: "1", gates: ["typecheck"])
+    assert_equal "1 check passed, 1 gate ran", one.lines.last
+    none = M.build(task: task(type: "fix"), template: "{checks} checks passed", model: "m", version: "1", gates: [])
+    assert_equal "0 checks passed", none.lines.last
+  end
+
   def test_the_plan_rejects_an_unknown_type_and_keeps_a_known_one
     assert_raises(Harness::ParseError) { task(type: "feature") }
     t = task(type: "chore")

@@ -979,3 +979,16 @@ an empty diff, and the task was committed as done with no changes. Two gaps, two
 - **The request check no longer skips quietly on an empty diff.** "The diff is in 0 parts" was logged as a plain
   skip. Now an empty change, or one whose every file was filtered out of review, records the check as not run, with
   `request.nothing_to_check` and a line in the review's failures.
+
+## An agent may not write the files of a task still to come (0.1.73)
+
+In a cookbook run, one agent wrote the files of three later tasks. Those tasks had nothing left to change, were blocked
+with `task.no_changes`, and a run whose work was all there ended failed. It happened again in the next run.
+
+- **The overreach is refused, not cleaned up.** The run gives each agent task the files that tasks still to come are
+  planned to write or delete. Writing, editing or deleting one returns an error naming its task. A file both tasks
+  plan stays writable, and so does a file no task plans (a helper).
+- **"Already done" was considered and left out.** Marking a task done because its files changed earlier in the run
+  would pass a task that did nothing whenever an earlier task shares a file with it, which is common. That is the
+  failure `task.no_changes` exists to catch (see "An empty diff is not done").
+- **The card says what is unfinished.** A run that raised no error said "The run stopped on an error."

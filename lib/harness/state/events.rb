@@ -136,7 +136,8 @@ module Harness
       def self.elapsed_ms(events)
         return 0 if events.size < 2
 
-        ((Time.iso8601(events.last["at"]) - Time.iso8601(events.first["at"])) * 1000).round
+        # The wall clock can be set back during a run; a duration is never below zero.
+        [((Time.iso8601(events.last["at"]) - Time.iso8601(events.first["at"])) * 1000).round, 0].max
       rescue ArgumentError
         0
       end

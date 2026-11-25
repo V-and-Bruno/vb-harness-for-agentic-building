@@ -66,8 +66,10 @@ module Harness
       # @param only [Array<String>, nil] the only files that may be written; nil: no such limit
       # @param deletable [Array<String>] the files the plan lets the task delete (its files.modify and files.delete);
       #   besides these, only files the agent created in this task may be deleted
+      # @param reserved [Hash{String=>String}] files the plan gives to tasks still to come, each with that task's id;
+      #   writing one here would leave its task nothing to do, so it is refused unless this task's plan names it too
       def initialize(root:, protected:, stack:, settings:, runner: nil, worktree: nil, map: nil, writable: false, tests: [],
-                     planned: [], ask: nil, only: nil, deletable: [])
+                     planned: [], ask: nil, only: nil, deletable: [], reserved: {})
         @root = root
         @protected = protected
         @runner = runner
@@ -84,6 +86,11 @@ module Harness
         end
         @deletable = deletable.filter_map do |p|
           Repo::Paths.normalize(p)
+        rescue PathError
+          nil
+        end
+        @reserved = reserved.each_with_object({}) do |(p, id), out|
+          out[Repo::Paths.normalize(p)] = id
         rescue PathError
           nil
         end
@@ -352,6 +359,12 @@ module Harness
       # @return [String, nil]
       def refusal(rel)
         return "error: only #{@only.join(', ')} may be changed here" if @only && !@only.include?(rel)
+
+        if (owner = @reserved[rel]) && !@planned.include?(rel)
+          return "error: #{rel} belongs to task #{owner}, later in the plan; leave it to that task, or it will have " \
+                 "nothing left to do. Finish this task with its own files. If its checks fail only because #{rel} is not " \
+                 "written yet, say so in finish"
+        end
 
         if guarded?(rel)
           return "error: #{rel} is #{CHECK_CONFIG.match?(rel) ? 'check configuration' : 'an existing test'}, which decides whether the " \

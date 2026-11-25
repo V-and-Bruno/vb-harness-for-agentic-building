@@ -62,6 +62,14 @@ class EventsTest < Minitest::Test
     assert_equal 8, S::Events.summary(@path)["seq"], "a stale cache is rebuilt"
   end
 
+  # The clock was set back between two events, and a run showed "-1s".
+  def test_a_clock_set_back_never_gives_a_negative_duration
+    @events.emit(stage: "intake", kind: "stage_started")
+    @t -= 60
+    @events.emit(stage: "report", kind: "stage_finished")
+    assert_equal 0, S::Events.summary(@path)["totals"]["elapsedMs"]
+  end
+
   def test_every_reason_code_has_human_text
     S::Reasons::TEXT.each_key { |code| refute_empty S::Reasons.text(code) }
     assert_equal "typecheck failed", S::Reasons.text("gate.failed:typecheck")
