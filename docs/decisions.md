@@ -992,3 +992,22 @@ with `task.no_changes`, and a run whose work was all there ended failed. It happ
   would pass a task that did nothing whenever an earlier task shares a file with it, which is common. That is the
   failure `task.no_changes` exists to catch (see "An empty diff is not done").
 - **The card says what is unfinished.** A run that raised no error said "The run stopped on an error."
+
+## Projects that are not Astro: their own checks, added once the user has seen them (0.1.74)
+
+The config ships one stack, so a user who pointed the harness at its own Ruby source got "no configured stack matches
+(stacks: astro)" and nothing to click.
+
+- **Suggest, do not assume.** `Gates::Suggest` reads a few well-known files and proposes fixed argv. It runs, installs
+  and writes nothing. The gates become real only as a stack in `config.json`, written after the user saw the exact
+  commands, so I3 ("commands from config") still describes everything a run executes. LAN devices cannot do it (I15).
+- **Per project.** Two Node projects have different scripts, and a stack's detect files cannot tell them apart. A
+  stack may name one folder (`project`); it is then used for that project only. A run works in a copy, so the stack is
+  looked up by the project's own folder.
+- **No checks, no build.** With nothing to run, every task would pass, and I7 would mean nothing. The project says
+  what is missing instead.
+- **Nothing that fetches.** npx and cargo run offline, go does not change go.mod, and scripts that watch are skipped
+  (a gate must end).
+- **Touched tests alone are not enough.** A gate that runs only the test files a task changed passes when it changed
+  none, so a project needs at least one check of the whole project.
+- **`detect` takes patterns.** `*.gemspec` in a config never matched, because names were compared exactly.

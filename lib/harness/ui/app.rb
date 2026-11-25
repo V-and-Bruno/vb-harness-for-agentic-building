@@ -213,6 +213,8 @@ module Harness
 
           key = "run:#{data['run']}"
           label = "build #{data['run']}"
+          stack = projects!.stack_for(path, project: run["repo"].to_s)
+          raise ConfigError, "no preview command for this project: set \"preview\" in its stack in config.json" unless stack&.preview
         else
           project = projects!.find(data["project"].to_s)
           stack = projects!.stack_for(project.path)
@@ -223,9 +225,6 @@ module Harness
           path = preview_copy(project, stack)
           label = "#{project.name} (its last commit)"
         end
-        stack = projects!.stack_for(path)
-        raise ConfigError, "no preview command for this project: set \"preview\" in its stack in config.json" unless stack&.preview
-
         Response.json(@previews.start(key, argv: stack.preview, chdir: path, label: label,
                                            env: Gates::Env.build(@env, allow: config!.gate_env_allow)))
       end
@@ -260,7 +259,7 @@ module Harness
       # @return [Array<ProjectSetup::Fix>]
       def run_setup_fixes(path, run)
         project = projects!.fixes_for(path)
-        return project if project.any? { |f| f.id == "commit-deps" }
+        return project if project.any? { |f| ["commit-deps", Projects::CHECKS].include?(f.id) }
 
         setup_fixes(path, run.dig("setupNeeds", "packages"))
       rescue GitError
@@ -274,7 +273,18 @@ module Harness
         fix = fixes.find { |f| f.id == data["fix"] } or raise ParseError, "that fix is not needed any more"
         unless data["confirm"] == true
           plan = { "action" => fix.label, "command" => fix.command, "target" => projects!.display(path) }
+          if fix.id == Projects::CHECKS
+            plan["command"] = fix.steps.map { |argv| argv.map { |a| ProjectSetup::Fix.shown(a) }.join(" ") }.join("\n")
+            plan["note"] = "These commands will decide whether each change is kept. They run in a copy of the project on every build. " \
+                           "This only adds them to your config; nothing runs now."
+          end
           return Response.json({ "confirm" => plan }, status: 409)
+        end
+
+        if fix.id == Projects::CHECKS
+          added = projects!.add_checks(path)
+          load_config
+          return Response.json({ "ok" => true, "label" => fix.label, "output" => added.join("\n") })
         end
 
         ok, output = ProjectSetup.run(fix, path, Gates::Env.build(@env, allow: config!.gate_env_allow))
@@ -293,7 +303,7 @@ module Harness
           out["setupFixes"] = run_setup_fixes(run["repo"], run).map(&:to_json_hash)
         end
         tree = run["worktree"].to_s
-        out["canPreview"] = !tree.empty? && File.directory?(tree) && !@projects.stack_for(tree)&.preview.nil?
+        out["canPreview"] = !tree.empty? && File.directory?(tree) && !@projects.stack_for(tree, project: run["repo"].to_s)&.preview.nil?
         out
       rescue StandardError
         {}

@@ -130,6 +130,52 @@ class ProjectsTest < Minitest::Test
     assert_equal %w[branch clean display error fixes git name preview stack version], v.keys.sort, "validation describes one folder; it never lists one"
   end
 
+  def committed(dir)
+    TestSupport.git!(dir, @git_env, "init", "-q", "-b", "main")
+    { "user.name" => "Harness Test", "user.email" => "test@example.invalid" }.each { |k, v| TestSupport.git!(dir, @git_env, "config", k, v) }
+    TestSupport.git!(dir, @git_env, "add", "-A")
+    TestSupport.git!(dir, @git_env, "commit", "-q", "-m", "init")
+  end
+
+  # A user pointed the harness at its own Ruby source and got "no configured stack matches (stacks: astro)".
+  def test_a_project_without_a_stack_is_offered_its_own_checks_and_they_are_added_only_after_confirmation
+    dir = File.join(@tmp, "ruby-tool")
+    FileUtils.mkdir_p(File.join(dir, "bin"))
+    File.write(File.join(dir, "bin", "check"), "#!/usr/bin/env ruby\nexit 0\n")
+    committed(dir)
+    projects.link(dir)
+    s = projects.status(dir)
+    assert_match(/no checks are set up/, s.error)
+    assert_equal [["checks", "Set up checks (Ruby)"]], s.fixes.map { |f| f.values_at("id", "label") }
+    before = File.read(@config_path)
+
+    start_app
+    ask = C.post(@server.port, "k" * 64, "/api/projects/fix", { "name" => "ruby-tool", "fix" => "checks" })
+    assert_equal 409, ask.status
+    assert_equal "ruby bin/check", ask.json.dig("confirm", "command")
+    assert_match(/nothing runs now/, ask.json.dig("confirm", "note"))
+    assert_equal before, File.read(@config_path), "nothing is added before confirmation"
+    done = C.post(@server.port, "k" * 64, "/api/projects/fix", { "name" => "ruby-tool", "fix" => "checks", "confirm" => true }).json
+    assert_equal [true, "check: ruby bin/check"], done.values_at("ok", "output")
+    after = projects.status(dir)
+    assert_nil after.error
+    assert_equal "ruby-tool", after.stack
+    assert_equal File.realpath(dir), JSON.parse(File.read(@config_path)).dig("stacks", "ruby-tool", "project")
+    assert_equal "astro", projects.status(@repo).stack, "other projects keep their checks"
+    assert_empty TestSupport.git!(dir, @git_env, "status", "--porcelain"), "the project itself is not changed"
+    assert_equal 400, C.post(@server.port, "k" * 64, "/api/projects/fix", { "name" => "ruby-tool", "fix" => "checks", "confirm" => true }).status
+  end
+
+  def test_a_project_with_nothing_to_check_it_cannot_build_and_says_so
+    dir = File.join(@tmp, "pages")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "index.html"), "<h1>Hi</h1>")
+    committed(dir)
+    s = projects.status(dir)
+    assert_match(/no checks found here: add a test/, s.error)
+    assert_empty s.fixes
+  end
+
   # I2 and I11 for linked folders: the build happens in <home>/workspaces/<runId>; the linked checkout keeps its
   # branch, files and status.
   def test_a_build_in_a_linked_folder_never_touches_it

@@ -10,6 +10,7 @@ require_relative "project_setup"
 require_relative "evidence/version"
 require_relative "exec"
 require_relative "gates/env"
+require_relative "gates/suggest"
 require_relative "repo/git"
 require_relative "state/records"
 
@@ -54,10 +55,9 @@ module Harness
     end
 
     # @param path [String] a project folder
-    # @return [Gates::Stack, nil] the configured stack whose detect files it has
-    def stack_for(path)
-      @config&.stacks&.values&.find { |s| s.detect.any? { |f| File.exist?(File.join(path, f)) } }
-    end
+    # @param project [String] the project's own folder, when path is a copy of it
+    # @return [Gates::Stack, nil] the stack set up for it, or the configured one whose detect files it has
+    def stack_for(path, project: path) = @config&.stack_for(path, project: project)
 
     # @param name [String]
     # @return [Project]
@@ -84,11 +84,14 @@ module Harness
       porcelain = git.run(%w[status --porcelain --untracked-files=all], chdir: path)
       clean = porcelain.strip.empty?
       deps = clean ? nil : ProjectSetup.dependency_changes(porcelain)
-      stack = @config&.stacks&.values&.find { |s| s.detect.any? { |f| File.exist?(File.join(path, f)) } }
+      stack = stack_for(path)
       version = stack && Evidence::Version.detect(path, name: stack.framework["name"] || stack.name,
                                                           package: stack.framework["lockfilePackage"] || stack.name)
-      setup = stack ? ProjectSetup.problem(stack, path) : nil
       fixes = fixes_for(path, stack, porcelain)
+      setup = if stack then ProjectSetup.problem(stack, path)
+              elsif fixes.any? { |f| f.id == CHECKS } then "no checks are set up for this project yet, so nothing could prove a change"
+              else "no checks found here: add a test, type check or build command first, so there is something to prove a change with"
+              end
       error = if clean then setup
               elsif deps then "uncommitted dependency changes (#{deps.join(', ')}): commit them before a build"
               else "uncommitted changes: commit or stash them before a build"
@@ -110,9 +113,42 @@ module Harness
       porcelain ||= git.run(%w[status --porcelain --untracked-files=all], chdir: path)
       deps = porcelain.strip.empty? ? nil : ProjectSetup.dependency_changes(porcelain)
       return [ProjectSetup.commit_fix(deps)] if deps
+      return [checks_fix(path)].compact if stack.nil? && porcelain.strip.empty?
       return [] unless porcelain.strip.empty? && stack && ProjectSetup.problem(stack, path)
 
       ProjectSetup.fixes(stack, path)
+    end
+
+    # The id of the fix that sets up a project's checks. It runs nothing: it writes a stack into config.json.
+    CHECKS = "checks"
+
+    # @param path [String]
+    # @return [ProjectSetup::Fix, nil] its steps are the checks themselves, to show before they are added; nil when
+    #   the project has none that are known
+    def checks_fix(path)
+      found = Gates::Suggest.for(path) or return nil
+      ProjectSetup::Fix.new(id: CHECKS, label: "Set up checks (#{found.label})", steps: found.stack["gates"].values.map { |g| g["argv"] })
+    end
+
+    # Write the suggested checks for one project into config.json. Only after the user saw them and confirmed.
+    # @param path [String]
+    # @return [Array<String>] the checks added, one line each
+    # @raise [ParseError] when there is nothing to suggest, or the project already has checks
+    def add_checks(path)
+      raise ParseError, "this project already has checks" if stack_for(path)
+
+      found = Gates::Suggest.for(path) or raise ParseError, "no checks found in this project"
+      real = File.realpath(path)
+      base = File.basename(real).downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
+      base = "project" if base.empty?
+      update_config do |cfg|
+        stacks = (cfg["stacks"] ||= {})
+        name = base
+        n = 1
+        name = "#{base}-#{n += 1}" while stacks.key?(name)
+        stacks[name] = found.stack.merge("project" => real)
+      end
+      Gates::Suggest.lines(found.stack)
     end
 
     # Remember a folder outside projects/ by name.

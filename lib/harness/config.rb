@@ -34,6 +34,14 @@ module Harness
       name = roles.fetch(role) { raise ArgumentError, "unknown role #{role.inspect}" }
       profiles.fetch(name)
     end
+
+    # The checks for a project: the stack set up for that folder, else the first stack whose detect files it has.
+    # @param root [String] the project's folder, or a run's copy of it
+    # @param project [String] the project's own folder, when root is a copy
+    # @return [Gates::Stack, nil]
+    def stack_for(root, project: root)
+      stacks.values.find { |s| s.for_project?(project) } || stacks.values.find { |s| s.detected?(root) }
+    end
   end
 
   class Config

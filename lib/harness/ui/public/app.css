@@ -479,7 +479,7 @@ kbd { font: inherit; font-size: 11.5px; border: 1px solid var(--border); border-
 .field-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .field-row .input { flex: 1 1 200px; }
 .cmd { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-sidebar); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
-.cmd .mono { color: var(--text); overflow-wrap: anywhere; }
+.cmd .mono { color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
 .validate { font-size: 13px; overflow-wrap: anywhere; }
 .validate.ok { color: var(--success); } .validate.bad { color: var(--danger); }
 
