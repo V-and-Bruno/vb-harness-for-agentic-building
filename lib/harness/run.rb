@@ -9,6 +9,7 @@ require_relative "errors"
 require_relative "gates/baseline"
 require_relative "gates/env"
 require_relative "gates/runner"
+require_relative "gates/suggest"
 require_relative "plan/plan"
 require_relative "project_setup"
 require_relative "repo/atomic_file"
@@ -65,7 +66,7 @@ module Harness
       git = Repo::Git.new(env: env, cache_dir: cache_dir)
       readiness!(config, Repo::Worktree.top_level(repo, git), git)
       worktree = Repo::Worktree.create(repo: repo, run_id: store.run_id, git: git, workspaces: workspaces)
-      stack = detect_stack(config, worktree.root)
+      stack = detect_stack(config, worktree.root, project: worktree.repo)
       stack.dependency_dirs.each do |dir|
         m = Repo::Mirror.link(File.join(worktree.repo, dir), File.join(worktree.root, dir))
         next unless m
@@ -170,15 +171,25 @@ module Harness
 
     # @param config [Config]
     # @param root [String]
+    # @param project [String] the project's own folder, when root is a run's copy
     # @return [Gates::Stack]
     # @raise [ConfigError]
-    def self.detect_stack(config, root)
+    def self.detect_stack(config, root, project: root)
       if config.stack != "auto"
         return config.stacks.fetch(config.stack) { raise ConfigError, "stack #{config.stack.inspect} is not configured" }
       end
 
-      found = config.stacks.values.find { |s| s.detect.any? { |f| File.exist?(File.join(root, f)) } }
-      found || raise(ConfigError, "no configured stack matches this repository (stacks: #{config.stacks.keys.join(', ')})")
+      config.stack_for(root, project: project) || raise(ConfigError, no_stack(config, root))
+    end
+
+    # @return [String] why a project without a stack cannot be built in, and what to do
+    def self.no_stack(config, root)
+      base = "no configured stack matches this repository (stacks: #{config.stacks.keys.join(', ')})"
+      found = Gates::Suggest.for(root)
+      return "#{base}, and it has no checks the harness knows: add a test, type check or build command, or a stack in config.json" unless found
+
+      "#{base}. It looks like a #{found.label} project: choose Set up checks in the app, or add them to config.json: " \
+        "#{Gates::Suggest.lines(found.stack).join('; ')}"
     end
 
     # @param config [Config]

@@ -80,12 +80,29 @@ module Harness
     # setup: {dependency dir => argv} that creates the folder when it is missing (e.g. a generated client), offered as
     # a one-click fix in the app after the user sees the exact command; node_modules needs no entry (an install).
     # preview: argv of the project's dev server with a {port} placeholder (the app's Preview), or nil.
+    # project: the one folder this stack is for (its checks were set up for it), or nil: any project with a detect file.
     Stack = Data.define(:name, :detect, :framework, :docs, :package_manager, :gates, :always_gates, :protected_paths,
-                        :dependency_dirs, :fix_hints, :review_notes, :setup, :preview)
+                        :dependency_dirs, :fix_hints, :review_notes, :setup, :preview, :project) do
+      # @param path [String] a project's top folder
+      # @return [Boolean] whether this stack is for that one project
+      def for_project?(path)
+        !project.nil? && (File.expand_path(project) == File.expand_path(path) || File.identical?(project, path))
+      rescue SystemCallError
+        false
+      end
+
+      # @param root [String] a project's folder, or a run's copy of it
+      # @return [Boolean] whether root has one of the detect files (a name, or a pattern such as "*.gemspec")
+      def detected?(root)
+        return false if project
+
+        detect.any? { |f| f.match?(/[*?\[{]/) ? Dir.glob(f, base: root).any? : File.exist?(File.join(root, f)) }
+      end
+    end
 
     # Parsing for Stack.
     class Stack
-      KEYS = %w[detect framework docs packageManager gates alwaysGates protectedPaths dependencyDirs fixHints reviewNotes setup preview].freeze
+      KEYS = %w[detect framework docs packageManager gates alwaysGates protectedPaths dependencyDirs fixHints reviewNotes setup preview project].freeze
 
       # @param name [String]
       # @param raw [Hash]
@@ -112,7 +129,18 @@ module Harness
             gates: gates.freeze, always_gates: always.dup.freeze,
             protected_paths: protected_paths(h, path), dependency_dirs: dependency_dirs(h, path),
             fix_hints: fix_hints(h, path), review_notes: Parse.strings!(h.fetch("reviewNotes", []), "#{path}.reviewNotes").dup.freeze,
-            setup: setup(h, path), preview: preview(h, path))
+            setup: setup(h, path), preview: preview(h, path), project: project(h, path))
+      end
+
+      # @return [String, nil] an absolute folder
+      # @raise [ParseError]
+      def self.project(h, path)
+        return nil if h["project"].nil?
+
+        dir = Parse.str!(h["project"], "#{path}.project")
+        raise ParseError, "#{path}.project: expected the project's full path" unless dir.start_with?("/") || dir.match?(%r{\A[A-Za-z]:[\\/]})
+
+        dir
       end
 
       # @return [Array<String>, nil] the dev server's argv, with {port} where the port goes

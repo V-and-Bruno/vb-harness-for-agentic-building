@@ -429,6 +429,12 @@ the start page) offers three ways:
 - **Clone from a git URL.** A shallow clone of an `https://` URL into `projects/<name>`.
 - **New Astro project.** `npm create astro@latest` into `projects/<name>`, then a first commit.
 
+**Not an Astro project?** The app finds the checks the project already has and offers **Set up checks**: `package.json`
+scripts, a Ruby `bin/check`, Rake or RSpec, Python tests, `go vet` and `go test`, `cargo check` and `cargo test`, or a
+Makefile's `check` or `test`. You see the exact commands first; **Add these checks** saves them in your `config.json` for
+that project only, and nothing runs until you build. They decide which changes are kept, so a project with no checks
+needs at least one first.
+
 Clone and New Astro project download code, so the dialog first shows you the exact command and runs it only after
 you choose **Clone project** or **Create project**. The app never lists folders on your disk.
 
@@ -817,8 +823,8 @@ rounds, tokens and time, plus tokens and time per role. Preparing the starting r
 
 ## Limitations
 
-- AstroJS is the only stack with a ready-made profile. Others work with your own gates, but without the Astro-aware
-  context map and docs.
+- AstroJS is the only stack with a ready-made profile. Other projects use [their own checks](#projects-and-workspaces),
+  without the Astro-aware context map and docs. A project with no checks at all cannot be built in.
 - Review evidence uses a local docs checkout only; online docs are not fetched.
 - Gates run your tools on your machine: a gate is as trustworthy as the command you configure.
 - `harness cleanup` and `push` are not implemented yet; use `git` directly to push a branch.
