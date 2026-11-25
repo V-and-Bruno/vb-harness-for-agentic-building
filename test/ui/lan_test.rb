@@ -122,6 +122,18 @@ class UILanTest < Minitest::Test
     refute_includes @app.seen, ["POST", "/api/settings"]
   end
 
+  def test_a_paired_device_may_chat_but_not_read_a_projects_files
+    post = { "cookie" => pair! }.merge(origin).merge("x-harness-token" => @token)
+    send = "/api/chats/c20260101-000000-abcdef/send"
+    assert_equal 200, lan("POST", send, headers: post, body: '{"text":"hi","mode":"chat"}').status
+    seen = @app.seen.size
+    ['{"text":"hi","reads":"shop"}', '{"text":"hi","reads":null}', '{"text":"hi","\\u0072eads":"shop"}'].each do |body|
+      assert_equal 403, lan("POST", send, headers: post, body: body).status, body
+    end
+    assert_equal seen, @app.seen.size, "it never reaches the app"
+    assert_equal 200, local("POST", send, body: '{"text":"hi","reads":"shop"}').status, "the computer itself may"
+  end
+
   def test_the_computer_controls_lan_mode_and_stop_turns_it_off
     off = Harness::UI::Server.new(app: @app, port: 0, token: @token)
     body = off.respond(Request.new(method: "GET", path: "/api/lan", query: {},

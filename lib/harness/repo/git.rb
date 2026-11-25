@@ -28,6 +28,8 @@ module Harness
         [%w[clean -fd], ->(rest) { rest.empty? }],
         [%w[rev-parse], ->(_rest) { true }],
         [%w[log], ->(_rest) { true }],
+        # the files git tracks: all Chat may read of a project (UI::ChatTools)
+        [%w[ls-files -z --cached], ->(rest) { rest.empty? }],
         # For the app's project picker (docs/decisions.md): a shallow https clone into projects/<name> (a download,
         # after the user confirms it), and a new repository for a new project. Nothing here writes to a remote.
         [%w[clone --depth 1 --], ->(rest) { rest.size == 2 && rest[0].match?(CLONE_URL) && rest[1].match?(CLONE_DEST) }],

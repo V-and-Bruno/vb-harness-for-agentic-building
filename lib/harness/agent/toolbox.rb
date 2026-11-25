@@ -68,8 +68,10 @@ module Harness
       #   besides these, only files the agent created in this task may be deleted
       # @param reserved [Hash{String=>String}] files the plan gives to tasks still to come, each with that task's id;
       #   writing one here would leave its task nothing to do, so it is refused unless this task's plan names it too
+      # @param visible [Array<String>, nil] the only files that may be read, listed or searched; nil: no such limit. For a
+      #   folder that holds more than committed files (a user's own checkout, not a run's copy)
       def initialize(root:, protected:, stack:, settings:, runner: nil, worktree: nil, map: nil, writable: false, tests: [],
-                     planned: [], ask: nil, only: nil, deletable: [], reserved: {})
+                     planned: [], ask: nil, only: nil, deletable: [], reserved: {}, visible: nil)
         @root = root
         @protected = protected
         @runner = runner
@@ -94,6 +96,8 @@ module Harness
         rescue PathError
           nil
         end
+        @visible = visible && Set.new(visible)
+        @visible_dirs = @visible && Set.new(@visible.flat_map { |f| ancestors(f) })
         @ask = ask
         @only = only
         @calls = []
@@ -210,7 +214,7 @@ module Harness
 
       def read_file(path, from, to)
         full = Repo::Paths.resolve_in_worktree(@root, path.to_s, protected: @protected)
-        return "error: #{path} does not exist" unless File.file?(full)
+        return "error: #{path} does not exist" unless File.file?(full) && visible?(Repo::Paths.normalize(path.to_s), full)
 
         if File.size(full) > READ_MAX_BYTES
           return "error: #{path} is #{File.size(full) / 1024} KB; read_file opens files up to #{READ_MAX_BYTES / 1024 / 1024} MB"
@@ -231,11 +235,12 @@ module Harness
       def list_dir(path)
         rel = path.to_s.strip.empty? || path.to_s.strip == "." ? "" : Repo::Paths.normalize(path.to_s)
         full = rel.empty? ? File.realpath(@root) : Repo::Paths.resolve_in_worktree(@root, rel, protected: @protected)
-        return "error: #{path} is not a folder" unless File.directory?(full)
+        return "error: #{path} is not a folder" unless File.directory?(full) && (@visible.nil? || rel.empty? || @visible_dirs.include?(rel))
 
         entries = Dir.children(full).sort.reject do |e|
           child = rel.empty? ? e : "#{rel}/#{e}"
-          e == ".git" || generated?(child) || Repo::Paths.protected?(child, @protected)
+          e == ".git" || generated?(child) || Repo::Paths.protected?(child, @protected) ||
+            (@visible && !@visible_dirs.include?(child) && !visible?(child, File.join(full, e)))
         end
         lines = entries.first(LIST_ENTRIES).map { |e| File.directory?(File.join(full, e)) ? "#{e}/" : e }
         more = entries.size > LIST_ENTRIES ? "\n(#{entries.size - LIST_ENTRIES} more)" : ""
@@ -293,16 +298,37 @@ module Harness
       def files(base)
         root = File.realpath(@root)
         start = base.empty? ? root : Repo::Paths.resolve_in_worktree(@root, base, protected: @protected)
-        return [base] if File.file?(start)
+        return [base].select { |rel| visible?(rel, start) } if File.file?(start)
 
         Dir.glob("**/*", File::FNM_DOTMATCH, base: start).filter_map do |r|
           rel = base.empty? ? r : "#{base}/#{r}"
           full = File.join(start, r)
           next if r.split("/").include?(".git") || generated?(rel) || !File.file?(full) || File.size(full) > SEARCH_FILE_BYTES
-          next if Repo::Paths.protected?(rel, @protected)
+          next if Repo::Paths.protected?(rel, @protected) || !visible?(rel, full)
 
           rel
         end.sort
+      end
+
+      # @param rel [String] normalized relative path
+      # @param full [String] where it is
+      # @return [Boolean] whether it may be read. A link counts as the file it leads to, so a tracked link cannot show
+      #   an untracked or protected file
+      def visible?(rel, full)
+        return true if @visible.nil?
+        return false unless @visible.include?(rel)
+        return true unless File.symlink?(full) || File.realpath(full) != File.join(File.realpath(@root), rel)
+
+        target = File.realpath(full).delete_prefix("#{File.realpath(@root)}/")
+        @visible.include?(target) && !Repo::Paths.protected?(target, @protected)
+      rescue SystemCallError
+        false
+      end
+
+      # @return [Array<String>] every folder above a file
+      def ancestors(file)
+        parts = file.split("/")[0...-1]
+        parts.each_index.map { |i| parts[0..i].join("/") }
       end
 
       # @return [Boolean]

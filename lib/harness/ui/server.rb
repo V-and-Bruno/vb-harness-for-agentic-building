@@ -159,6 +159,8 @@ module Harness
         return Response.error(403, "cross-origin request") unless request.headers["origin"].to_s.downcase == "http://#{@lan.ip}:#{@port}"
         return Response.error(400, "expected a JSON body") unless request.headers["content-type"].to_s.start_with?("application/json")
         return Response.error(403, "only on the computer running the harness") unless LAN_POST.any? { |re| re.match?(request.path) }
+        # Chat on a paired device talks; it does not read the computer's project files.
+        return Response.error(403, "reading a project's files is only on the computer running the harness") if request.json.is_a?(Hash) && request.json.key?("reads")
 
         @app.call(request)
       end

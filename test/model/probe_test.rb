@@ -163,6 +163,17 @@ class ProbeTest < Minitest::Test
     assert_equal 1, Dir.glob(File.join(@dir, ".cache", "probe", "*.json")).size
   end
 
+  # A server that stamps each listing with the current time: every chat message was probed again, half a minute each.
+  def test_a_listing_stamped_with_the_time_is_still_cached
+    models = [{ "id" => "test-model", "created" => 1 }]
+    srv = fake(models: models)
+    probe_for(srv)
+    asked = srv.chat_bodies.size
+    models[0]["created"] = 2
+    probe_for(srv)
+    assert_equal asked, srv.chat_bodies.size, "answered from the cache"
+  end
+
   def test_changed_model_metadata_invalidates_the_cache
     probe_for(fake(models: [{ "id" => "m", "context_length" => 4096 }]))
     r = probe_for(fake(models: [{ "id" => "m", "context_length" => 8192 }]))
