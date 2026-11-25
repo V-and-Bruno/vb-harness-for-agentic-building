@@ -124,6 +124,48 @@ class UIAppTest < Minitest::Test
     assert_empty get("/api/chats").json
   end
 
+  JPEG = "data:image/jpeg;base64,#{["\xFF\xD8\xFF\xE0picture".b].pack('m0')}".freeze
+
+  # Pictures go to a model that was measured to see them, and to no other; what was sent is checked first.
+  def test_pictures_reach_only_a_model_that_sees_them
+    sees = true
+    colours = Harness::Model::Probe::IMAGES
+    @model = Fake.new do |body, _n|
+      last = body["messages"].last["content"]
+      colour = last.is_a?(Array) && colours.find { |_, data| last.last.dig("image_url", "url").to_s.end_with?(data) }
+      if body["stream"] then sse_reply({ "content" => "A blue button." })
+      elsif colour then sees ? Fake.ok(colour.first) : Fake.error(400, "no pictures here")
+      else Fake.ok("OK")
+      end
+    end
+    start(config: { "profiles" => { "default" => { "baseUrl" => @model.base_url, "model" => "test-model" } } })
+    assert_equal({ "images" => true }, get("/api/abilities?profile=default&model=test-model").json)
+    chat = post("/api/chats").json["id"]
+    ["data:text/html;base64,PGI+", "https://example.com/x.png", "data:image/png;base64,#{["<svg/>"].pack('m0')}", "data:image/svg+xml;base64,PHN2Zz4="].each do |bad|
+      assert_equal 400, post("/api/chats/#{chat}/send", { "text" => "look", "mode" => "chat", "images" => [bad] }).status, bad
+    end
+    assert_equal 400, post("/api/chats/#{chat}/send", { "text" => "look", "mode" => "chat", "images" => [JPEG] * 4 }).status, "at most 3"
+    assert_equal 400, post("/api/chats/#{chat}/send", { "text" => "look", "mode" => "build", "images" => [JPEG] }).status, "Build takes words"
+
+    out = post("/api/chats/#{chat}/send", { "text" => "What is this?", "mode" => "chat", "images" => [JPEG] }).json
+    get("/api/streams/#{out['stream']}")
+    asked = @model.chat_bodies.reverse.find { |b| b["stream"] }["messages"].last["content"]
+    assert_equal [{ "type" => "text", "text" => "What is this?" }, { "type" => "image_url", "image_url" => { "url" => JPEG } }], asked
+    assert_equal [JPEG], get("/api/chats/#{chat}").json["messages"].first["images"]
+    only = post("/api/chats/#{chat}/send", { "text" => "", "mode" => "chat", "images" => [JPEG] })
+    assert_equal 200, only.status, "a picture alone is a message"
+
+    sees = false
+    FileUtils.rm_rf(File.join(@home, ".cache"))
+    assert_equal({ "images" => false }, get("/api/abilities?profile=default&model=test-model").json)
+    refused = post("/api/chats/#{chat}/send", { "text" => "and this?", "mode" => "chat", "images" => [JPEG] })
+    assert_equal [400, "this model cannot see pictures"], [refused.status, refused.json["error"]]
+    text = post("/api/chats/#{chat}/send", { "text" => "So?", "mode" => "chat" }).json
+    get("/api/streams/#{text['stream']}")
+    first = @model.chat_bodies.reverse.find { |b| b["stream"] }["messages"].find { |m| m["content"].to_s.include?("What is this?") }
+    assert_equal "What is this?\n\n#{Harness::UI::Conversation::UNSEEN}", first["content"], "a chat moved to a model that cannot see them says so"
+  end
+
   def test_a_chat_reply_streams_text_and_thinking_and_is_saved
     @model = Fake.new { |_body, _n| sse_reply({ "reasoning_content" => "Let me think." }, { "content" => "Hel" }, { "content" => "lo <thi" }, { "content" => "nk>inline</think>!" }) }
     start(config: RR.raw_config(@model.base_url))

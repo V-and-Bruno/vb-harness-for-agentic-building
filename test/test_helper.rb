@@ -38,7 +38,7 @@ module TestSupport
   CAPS = {
     model_id: "test-model", context_tokens: 16_384, context_source: "models", structured_output: "json_schema",
     tool_calls: "native", thinking_control: "chat_template_kwargs", reasoning: "separate", prompt_tps: nil, gen_tps: nil,
-    continuation: "none"
+    continuation: "none", images: "none"
   }.freeze
 
   # @param base_url [String]

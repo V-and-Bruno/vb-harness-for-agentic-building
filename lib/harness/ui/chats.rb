@@ -77,6 +77,7 @@ module Harness
           index = chat["messages"].size - 1
           if chat["title"] == "New chat" && msg["role"] == "user"
             first = msg["content"].to_s.gsub(/\s+/, " ").strip
+            first = "Picture" if first.empty? && msg["images"]
             chat["title"] = first.size > TITLE_MAX ? "#{first[0, TITLE_MAX]}…" : first
           end
         end
