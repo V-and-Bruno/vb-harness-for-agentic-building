@@ -73,9 +73,10 @@ module Harness
 
       # @param task [Plan::Task]
       # @param done [Array<String>] one-line summaries of tasks already committed
+      # @param reserved [Hash{String=>String}] files the plan gives to tasks still to come, each with that task's id
       # @return [Outcome]
-      def run(task, done: [])
-        start(task, done)
+      def run(task, done: [], reserved: {})
+        start(task, done, reserved)
         guarded { from_the_start }
       end
 
@@ -85,9 +86,10 @@ module Harness
       # @param task [Plan::Task]
       # @param saved [Hash] the task's state.json
       # @param done [Array<String>]
+      # @param reserved [Hash{String=>String}] as for #run
       # @return [Outcome]
-      def resume(task, saved, done: [])
-        start(task, done)
+      def resume(task, saved, done: [], reserved: {})
+        start(task, done, reserved)
         state = saved["state"].to_s
         emit("task.gather", "retried", detail: "resumed from #{state.empty? ? 'pending' : state}")
         guarded do
@@ -115,9 +117,10 @@ module Harness
       private
 
       # @return [void]
-      def start(task, done)
+      def start(task, done, reserved)
         @task = task
         @done = done
+        @reserved = reserved
         @fix_rounds = 0
         @touched = Set.new
         @created = Set.new
@@ -159,7 +162,7 @@ module Harness
         toolbox = Agent::Toolbox.new(root: @ctx.worktree.root, protected: @ctx.stack.protected_paths, stack: @ctx.stack,
                                      settings: settings, runner: @ctx.runner, worktree: @ctx.worktree, map: @ctx.map,
                                      writable: true, tests: @task.test_paths, planned: @task.writable + @task.files.delete - @locked,
-                                     deletable: @task.deletable - @locked, ask: @mailbox.asker)
+                                     deletable: @task.deletable - @locked, reserved: @reserved, ask: @mailbox.asker)
         roles = @ctx.config.roles
         @ladder = Agent::Ladder.new(max: settings.max_recoveries, stronger: roles[:rescuer] != roles[:implementer])
         @session = agent_session(:implementer, toolbox, "#{@task.id}.agent")

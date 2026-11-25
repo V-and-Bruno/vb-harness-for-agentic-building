@@ -270,7 +270,7 @@ module Harness
         # A stop before the task saved any state can still leave edits behind: start from the last commit.
         @setup.worktree.revert! if resume && %w[pending skipped].include?(saved&.fetch("state", nil) || "pending") && @setup.worktree.dirty?
         seed(task)
-        outcomes[task.id] = run_task(task, done, saved)
+        outcomes[task.id] = run_task(task, done, saved, reserved_files(queue))
         halt = "the model server is unavailable" if outcomes[task.id].reason == "model.unavailable"
         follow = outcomes[task.id].status == "done" ? add_follow_ups(plan, task) : []
         plan = plan.with(tasks: plan.tasks + follow) unless follow.empty?
@@ -329,20 +329,28 @@ module Harness
     end
 
     # Finished tasks keep their outcome on resume; skipped tasks and those stopped by a model outage run again.
+    # The files that tasks still to come are planned to write or delete. An agent that writes one leaves its task with
+    # nothing to change, and a run whose work was all there failed for it.
+    # @param queue [Array<Plan::Task>] the tasks after the current one
+    # @return [Hash{String=>String}] each file with the id of the first task that plans it
+    def reserved_files(queue)
+      queue.each_with_object({}) { |t, out| (t.writable + t.files.delete).each { |f| out[f] ||= t.id } }
+    end
+
     # @return [Task::Outcome]
-    def run_task(task, done, saved)
+    def run_task(task, done, saved, reserved)
       loop_ = Task::Loop.new(@ctx)
       case saved&.fetch("state", nil)
-      when nil, "pending", "skipped" then loop_.run(task, done: done)
+      when nil, "pending", "skipped" then loop_.run(task, done: done, reserved: reserved)
       when "done"
         Task::Outcome.new(id: task.id, status: "done", commit: saved["commit"], fix_rounds: saved["fixRounds"].to_i,
                           reason: nil, detail: "finished before resume", gates: [])
       when "blocked"
-        return loop_.run(task, done: done) if saved["reason"] == "model.unavailable"
+        return loop_.run(task, done: done, reserved: reserved) if saved["reason"] == "model.unavailable"
 
         Task::Outcome.new(id: task.id, status: "blocked", commit: nil, fix_rounds: saved["fixRounds"].to_i,
                           reason: saved["reason"], detail: "blocked before resume", gates: [])
-      else loop_.resume(task, saved, done: done)
+      else loop_.resume(task, saved, done: done, reserved: reserved)
       end
     end
 

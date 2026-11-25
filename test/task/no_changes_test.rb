@@ -97,6 +97,11 @@ class NoChangesTest < Minitest::Test
   def call(name, args) = { "id" => "c1", "type" => "function", "function" => { "name" => name, "arguments" => JSON.generate(args) } }
 
   def agent_run(script, task)
+    outcome, setup, env = agent_plan(script, [task])
+    [outcome.tasks.first, setup, env]
+  end
+
+  def agent_plan(script, tasks)
     seen = 0
     @server = Fake.new do |body, _n|
       if body["messages"].first["content"].start_with?(TASK_AGENT)
@@ -111,8 +116,8 @@ class NoChangesTest < Minitest::Test
     store = Harness::State::RunStore.new(runs_dir: File.join(@tmp, "runs"), run_id: "a1")
     setup = Harness::Run.intake(config: config, repo: repo, store: store, parent_env: ENV.to_h.merge(env))
     outcome = Harness::Run.new(config: config, client: F.client(config, store), setup: setup)
-                          .execute(Harness::Plan::PlanParser.parse({ "tasks" => [task] }))
-    [outcome.tasks.first, setup, env]
+                          .execute(Harness::Plan::PlanParser.parse({ "tasks" => tasks }))
+    [outcome, setup, env]
   end
 
   def delete_task
@@ -147,5 +152,22 @@ class NoChangesTest < Minitest::Test
     t1, setup, = agent_run(script, delete_task)
     assert_equal ["done", 1], [t1.status, t1.fix_rounds]
     refute File.exist?(File.join(setup.worktree.root, TAX))
+  end
+
+  # A field run's first agent wrote the files of three later tasks; those tasks had nothing left to change, were
+  # blocked, and a run whose work was all there failed.
+  def test_an_agent_cannot_do_a_later_tasks_work_so_that_task_still_has_something_to_do
+    plan = [{ "id" => "T1", "title" => "Add one", "intent" => "Add one.", "files" => { "create" => ["src/one.ts"] }, "acceptance" => [{ "kind" => "gate", "gate" => "typecheck" }] },
+            { "id" => "T2", "title" => "Add two", "intent" => "Add two.", "files" => { "create" => ["src/two.ts"] }, "acceptance" => [{ "kind" => "gate", "gate" => "typecheck" }], "dependsOn" => ["T1"] }]
+    write = ->(path) { call("write_file", { "path" => path, "content" => "export const x = 1;
+" }) }
+    script = [Fake.ok("", tool_calls: [write.call("src/one.ts")]), Fake.ok("", tool_calls: [write.call("src/two.ts")]), finish,
+              Fake.ok("", tool_calls: [write.call("src/two.ts")]), finish]
+    outcome, setup, env = agent_plan(script, plan)
+    assert_equal %w[done done], outcome.tasks.map(&:status), outcome.tasks.map(&:detail).inspect
+    assert_equal 0, outcome.exit_code
+    named = ->(rev) { TestSupport.git!(setup.worktree.root, env, "show", "--name-only", "--format=", rev).split }
+    assert_equal ["src/two.ts"], named.call("HEAD")
+    assert_equal ["src/one.ts"], named.call("HEAD~1")
   end
 end

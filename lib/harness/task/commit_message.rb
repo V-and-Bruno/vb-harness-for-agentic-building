@@ -18,7 +18,9 @@ module Harness
       # @return [String]
       def self.build(task:, template:, model:, version:, gates:)
         values = { "model" => model, "version" => version, "checks" => gates.size.to_s, "gates" => gates.join(", ") }
-        trailer = template.gsub(/\{(\w+)\}/) { values.fetch(Regexp.last_match(1), Regexp.last_match(0)) }
+        # "{checks} checks passed" reads "1 check passed" for one: the noun after the count follows it.
+        counted = template.gsub(/\{checks\} (check|gate)s\b/) { "{checks} #{Regexp.last_match(1)}#{gates.size == 1 ? '' : 's'}" }
+        trailer = counted.gsub(/\{(\w+)\}/) { values.fetch(Regexp.last_match(1), Regexp.last_match(0)) }
         "#{subject(task)}\n\n#{trailer}"
       end
 
