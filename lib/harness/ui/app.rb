@@ -24,6 +24,7 @@ require_relative "../providers/setup"
 require_relative "../state/reasons"
 require_relative "appearance"
 require_relative "builds"
+require_relative "chat_tools"
 require_relative "chats"
 require_relative "conversation"
 require_relative "http"
@@ -130,7 +131,7 @@ module Harness
         when :appearance_post then Response.json(Appearance.save(@home, body(req)).to_json_hash)
         when :state then Response.json(state)
         when :chat_list then Response.json(chat_list)
-        when :abilities then Response.json(@conversation ? @conversation.abilities(model_choice(req.query.slice("profile", "model"))) : { "images" => false })
+        when :abilities then Response.json(@conversation ? @conversation.abilities(model_choice(req.query.slice("profile", "model"))) : { "images" => false, "tools" => false })
         when :run_resume then Response.json({ "run" => builds_for(args[0]).resume(args[0]) })
         when :previews then Response.json(@previews.list)
         when :preview_post then preview_post(args[0], body(req))
@@ -402,9 +403,12 @@ module Harness
           @chats.append(id, { "role" => "build", "runId" => run, "project" => project.name })
           Response.json({ "run" => run })
         else
+          reads = data["reads"].nil? ? nil : projects!.find(data["reads"].to_s).name
+          raise ParseError, "this model cannot look things up: it does not call tools" if reads && !@conversation.uses_tools?(@chats.get(id))
           raise ParseError, "this model cannot see pictures" unless images.empty? || @conversation.sees_images?(@chats.get(id))
 
-          @chats.append(id, { "role" => "user", "content" => text, "mode" => "chat", "images" => images.empty? ? nil : images }.compact)
+          @chats.append(id, { "role" => "user", "content" => text, "mode" => "chat", "images" => images.empty? ? nil : images, "reads" => reads }
+                           .compact.merge(@conversation.design(text)))
           Response.json({ "stream" => @conversation.prepare(id) })
         end
       end
@@ -536,7 +540,19 @@ module Harness
         @probe = Model::Probe.new(http: @http, cache_dir: File.join(@home, ".cache"), env: @env)
         @projects = @config && Projects.new(home: @home, config_path: @config_path, config: @config, env: @env)
         @conversation = @config && Conversation.new(config: @config, chats: @chats, probe: @probe, stream: Model::Stream.new(env: @env),
-                                                    http: @http, env: @env)
+                                                    http: @http, env: @env, tools: method(:chat_tools))
+      end
+
+      # @param name [String] the project the user picked for Chat to read
+      # @param room [Integer] characters of results that fit
+      # @return [ChatTools]
+      # @raise [ConfigError, GitError]
+      def chat_tools(name, room)
+        project = projects!.find(name)
+        git = Repo::Git.new(env: Gates::Env.build(@env, allow: config!.gate_env_allow))
+        raise ConfigError, "#{name}: not the top folder of a git repository" unless File.identical?(Repo::Worktree.top_level(project.path, git), project.path)
+
+        ChatTools.new(root: File.realpath(project.path), stack: projects!.stack_for(project.path), settings: config!.agent, git: git, room: room)
       end
 
       # @return [Config]

@@ -56,6 +56,15 @@ module Harness
         @http = http
       end
 
+      # The frames a chat message links to, as fenced text. Only the user's own words are scanned, as for #expand.
+      # @param text [String]
+      # @return [String, nil] nil when there is no link
+      # @raise [ConfigError] when a linked design cannot be read
+      def outline(text)
+        expanded = expand(text)
+        expanded == text ? nil : expanded.delete_prefix(text.rstrip).strip
+      end
+
       # The outline carries its own fence: the planner sees a request as the user's words, and layer names are not.
       # @param request [String] the feature request
       # @return [String] the request, followed by the linked frames when it has any

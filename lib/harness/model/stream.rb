@@ -16,6 +16,9 @@ module Harness
     # pieces, whether the server sends reasoning in its own field or inline in <think> tags. The caller can stop a
     # stream between pieces.
     class Stream
+      # Tool calls in one reply, and characters of one call's arguments: more is a model gone wrong.
+      MAX_CALLS = 16
+      MAX_ARGUMENTS = 20_000
       THINK_OPEN = "<think>"
       THINK_CLOSE = "</think>"
 
@@ -35,14 +38,20 @@ module Harness
       # @param max_tokens [Integer]
       # @param stop [#call] returns true when the user pressed Stop
       # @param thinking_off [String, nil] a probed thinking control to turn thinking off with, or nil to leave it
+      # @param tools [Array<Hash>, nil] tool definitions the model may call
+      # @param tool_choice [String, nil] "none" when tools are listed only because earlier messages used them
+      # @param calls [Array<Hash>] filled with the tool calls the model made: {"id", "name", "arguments" (JSON text)}
       # @yieldparam piece [Piece]
       # @return [String] why it ended: "stop", "length", "stopped" (by the user) or another finish reason
       # @raise [ModelUnavailableError] when the server cannot be reached or answers with an error
-      def call(profile:, model:, messages:, max_tokens:, stop: -> { false }, thinking_off: nil, &on_piece)
+      def call(profile:, model:, messages:, max_tokens:, stop: -> { false }, thinking_off: nil, tools: nil, tool_choice: nil, calls: [], &on_piece)
         uri = URI("#{profile.base_url}/chat/completions")
         body = { "model" => model, "messages" => messages, "stream" => true, "max_tokens" => max_tokens }
         body["temperature"] = profile.temperature unless profile.temperature.nil?
         body = Wire.thinking_off(body, thinking_off) if thinking_off
+        body["tools"] = tools if tools
+        body["tool_choice"] = tool_choice if tools && tool_choice
+        parts = {}
         req = Net::HTTP::Post.new(uri)
         req["Content-Type"] = "application/json"
         Probe.headers(profile, @env).each { |k, v| req[k] = v }
@@ -68,11 +77,12 @@ module Harness
                 data = line.delete_prefix("data:").strip
                 next finish ||= "stop" if data == "[DONE]"
 
-                finish = emit(data, splitter, finish, &on_piece)
+                finish = emit(data, splitter, finish, parts, &on_piece)
               end
             end
           end
         end
+        calls.concat(parts.sort.map(&:last).reject { |c| c["name"].empty? })
         finish || "stop"
       rescue *Http::NETWORK_ERRORS => e
         raise ModelUnavailableError, "streaming from #{profile.base_url} failed (#{e.class.name.split('::').last})"
@@ -81,7 +91,7 @@ module Harness
       private
 
       # @return [String, nil] the finish reason, once known
-      def emit(data, splitter, finish, &on_piece)
+      def emit(data, splitter, finish, parts, &on_piece)
         event = JSON.parse(data)
         choice = event.is_a?(Hash) ? Array(event["choices"]).first : nil
         return finish unless choice.is_a?(Hash)
@@ -90,9 +100,23 @@ module Harness
         reasoning = delta["reasoning_content"] || delta["reasoning"]
         on_piece.call(Piece.new(kind: "thinking", text: reasoning)) if reasoning.is_a?(String) && !reasoning.empty?
         splitter.feed(delta["content"].to_s).each { |p| on_piece.call(p) } if delta["content"].is_a?(String)
+        Array(delta["tool_calls"]).each { |c| gather(parts, c) if c.is_a?(Hash) }
         choice["finish_reason"] || finish
       rescue JSON::ParserError
         finish
+      end
+
+      # A tool call arrives in pieces: its name and id first, then its arguments a little at a time.
+      # @return [void]
+      def gather(parts, piece)
+        index = piece["index"].is_a?(Integer) ? piece["index"] : 0
+        return unless parts.key?(index) || parts.size < MAX_CALLS
+
+        call = parts[index] ||= { "id" => +"", "name" => +"", "arguments" => +"" }
+        call["id"] << piece["id"] if piece["id"].is_a?(String) && call["id"].empty?
+        fn = piece["function"].is_a?(Hash) ? piece["function"] : {}
+        call["name"] << fn["name"] if fn["name"].is_a?(String) && call["name"].size < 200
+        call["arguments"] << fn["arguments"] if fn["arguments"].is_a?(String) && call["arguments"].size < MAX_ARGUMENTS
       end
 
       # Splits streamed content at <think> and </think>, which may arrive cut across pieces.

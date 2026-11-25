@@ -16,6 +16,9 @@ module Harness
     # cached in .cache/probe/<sha256>.json. Profile values other than "probe" override the result.
     class Probe
       DEFAULT_CONTEXT = 8192
+      # Fields of a model listing that say nothing about the model. Some servers put the current time in "created", so
+      # a key with it never matched and every chat message probed the model again.
+      UNSTABLE = %w[created].freeze
 
       Result = Data.define(:model_id, :context_tokens, :context_source, :structured_output, :tool_calls,
                            :thinking_control, :reasoning, :prompt_tps, :gen_tps, :continuation, :images)
@@ -105,7 +108,7 @@ module Harness
       # @raise [ModelUnavailableError] when GET /models fails or the configured model is not listed
       def call(profile, refresh: false)
         entry = model_entry(profile)
-        path = File.join(@cache_dir, "probe", "#{Sha256.hex(JSON.generate([profile.base_url, entry]))}.json")
+        path = File.join(@cache_dir, "probe", "#{Sha256.hex(JSON.generate([profile.base_url, entry.except(*UNSTABLE)]))}.json")
         result = (!refresh && read_cache(path)) || probe(profile, entry).tap { |r| State.write_json(path, r.to_json_hash) }
         apply_profile(profile, result)
       end

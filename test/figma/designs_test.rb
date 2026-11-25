@@ -51,6 +51,13 @@ class FigmaDesignsTest < Minitest::Test
     assert_empty http.calls
   end
 
+  def test_a_chat_message_gets_only_the_fenced_outline
+    assert_nil designs(FakeHttp.new).outline("no link here")
+    out = designs(FakeHttp.new(json: reply(frame))).outline("Look: https://www.figma.com/design/abc/Name?node-id=1-2  ")
+    assert_match(/\A## The linked Figma design/, out)
+    assert_match(/<untrusted-data id=/, out)
+  end
+
   def test_a_link_is_read_once_with_the_token_in_the_header_only
     http = FakeHttp.new(json: reply(frame))
     out = designs(http).expand("Build this: #{LINK} and match #{LINK}")

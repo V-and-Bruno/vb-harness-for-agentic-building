@@ -139,7 +139,7 @@ class UIAppTest < Minitest::Test
       end
     end
     start(config: { "profiles" => { "default" => { "baseUrl" => @model.base_url, "model" => "test-model" } } })
-    assert_equal({ "images" => true }, get("/api/abilities?profile=default&model=test-model").json)
+    assert_equal({ "images" => true, "tools" => false }, get("/api/abilities?profile=default&model=test-model").json)
     chat = post("/api/chats").json["id"]
     ["data:text/html;base64,PGI+", "https://example.com/x.png", "data:image/png;base64,#{["<svg/>"].pack('m0')}", "data:image/svg+xml;base64,PHN2Zz4="].each do |bad|
       assert_equal 400, post("/api/chats/#{chat}/send", { "text" => "look", "mode" => "chat", "images" => [bad] }).status, bad
@@ -157,7 +157,7 @@ class UIAppTest < Minitest::Test
 
     sees = false
     FileUtils.rm_rf(File.join(@home, ".cache"))
-    assert_equal({ "images" => false }, get("/api/abilities?profile=default&model=test-model").json)
+    assert_equal({ "images" => false, "tools" => false }, get("/api/abilities?profile=default&model=test-model").json)
     refused = post("/api/chats/#{chat}/send", { "text" => "and this?", "mode" => "chat", "images" => [JPEG] })
     assert_equal [400, "this model cannot see pictures"], [refused.status, refused.json["error"]]
     text = post("/api/chats/#{chat}/send", { "text" => "So?", "mode" => "chat" }).json
