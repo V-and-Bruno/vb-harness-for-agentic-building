@@ -1011,3 +1011,16 @@ The config ships one stack, so a user who pointed the harness at its own Ruby so
 - **Touched tests alone are not enough.** A gate that runs only the test files a task changed passes when it changed
   none, so a project needs at least one check of the whole project.
 - **`detect` takes patterns.** `*.gemspec` in a config never matched, because names were compared exactly.
+
+## Pictures in Chat, for models that see them (0.1.75)
+
+A user wanted to show the chat a design it could not open.
+
+- **Measured, not assumed (I1).** The probe shows two small pictures of one colour each and accepts only an answer that
+  names both. A server that ignores pictures, or a model that guesses, fails. The page offers **Picture** only then, and
+  the server refuses pictures for any other model.
+- **Chat only.** Every step of a build is text with exact edits, and a picture cannot be checked. The model turns a
+  picture into words in Chat, and those words go to Build, where the user can read them first.
+- **The limits stay.** The page draws each picture at 1280 px or less and saves it as JPEG, so a message fits the 1 MB
+  request limit, and a photo's metadata never leaves the browser. The server accepts only PNG, JPEG and WebP data URLs
+  whose first bytes match, never a link: a link would make the model server fetch an address.

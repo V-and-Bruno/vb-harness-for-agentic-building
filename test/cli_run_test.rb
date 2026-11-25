@@ -94,7 +94,7 @@ class CliRunTest < Minitest::Test
     assert_equal 0, code, err
     run = JSON.parse(out)
     assert_equal "done", run["status"]
-    assert_equal 0, @server.chat_bodies.count { |b| b["messages"].first["content"].start_with?("You plan") }, "the planner is not asked"
+    assert_equal 0, @server.chat_bodies.count { |b| b["messages"].first["content"].to_s.start_with?("You plan") }, "the planner is not asked"
     implement = @server.chat_bodies.find { |b| b["messages"].last["content"].include?("T1: Double the price") }
     assert_includes implement["messages"].last["content"], "The factor is exactly 2."
   end
@@ -138,7 +138,7 @@ class CliRunTest < Minitest::Test
     code, out, err = cli("run", "--repo", @repo, "--from-plan", @plan_path, "--config", @config_path, "--review", "off", "--json")
     assert_equal 0, code, err
     assert_equal "done", JSON.parse(out)["status"]
-    reviews = @server.chat_bodies.count { |b| F::REVIEW_ROLES.any? { |o, _| b["messages"].first["content"].start_with?(o) } }
+    reviews = @server.chat_bodies.count { |b| F::REVIEW_ROLES.any? { |o, _| b["messages"].first["content"].to_s.start_with?(o) } }
     assert_equal 0, reviews, "--review off makes no review calls"
     code, _out, err = cli("run", "--repo", @repo, "--from-plan", @plan_path, "--config", @config_path, "--review", "some")
     assert_equal 2, code

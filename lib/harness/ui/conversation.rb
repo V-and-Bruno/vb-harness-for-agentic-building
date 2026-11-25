@@ -18,6 +18,30 @@ module Harness
     class Conversation
       SUMMARY_TOKENS = 600
       LIST_TIMEOUT = 3
+      # Room kept for one picture when fitting a chat to the context. Servers count pictures differently; this is a
+      # safe middle, and only decides how many old messages are kept.
+      IMAGE_TOKENS = 1500
+      MAX_IMAGES = 3
+      # All pictures of one message, as sent (the request limit is HTTP::MAX_BODY). The page shrinks them first.
+      MAX_IMAGE_CHARS = 900_000
+      # A picture as the page sends it, and what its first bytes must be.
+      IMAGE = %r{\Adata:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})\z}
+      MAGIC = { "png" => "\x89PNG\r\n\x1A\n".b, "jpeg" => "\xFF\xD8\xFF".b, "webp" => "RIFF".b }.freeze
+      UNSEEN = "[A picture was attached here, but this model cannot see pictures.]"
+
+      # @param raw [Object] the pictures of a message, as the page sent them
+      # @return [Array<String>] the same data URLs, checked
+      # @raise [ParseError]
+      def self.images(raw)
+        return [] if raw.nil?
+        raise ParseError, "up to #{MAX_IMAGES} pictures" unless raw.is_a?(Array) && raw.size <= MAX_IMAGES && raw.all?(String)
+        raise ParseError, "the pictures are too large" if raw.sum(&:bytesize) > MAX_IMAGE_CHARS
+
+        raw.each do |url|
+          m = IMAGE.match(url) or raise ParseError, "a picture must be a PNG, JPEG or WebP"
+          raise ParseError, "a picture must be a PNG, JPEG or WebP" unless m[2].unpack1("m").start_with?(MAGIC.fetch(m[1]))
+        end
+      end
       RETRY_NOTICE = "The model ran out of room while thinking; asking again with thinking off."
 
       # @param config [Config]
@@ -50,6 +74,22 @@ module Harness
         rescue ModelUnavailableError => e
           [{ "profile" => p.name, "model" => p.model, "label" => "#{p.name} · #{p.model}", "error" => e.message }]
         end
+      end
+
+      # What the chosen model can do, for the page: measured by the probe, never assumed (I1).
+      # @param choice [Hash, nil] {"profile", "model"}
+      # @return [Hash] {"images" => Boolean}
+      def abilities(choice)
+        { "images" => sees_images?({ "model" => choice }) }
+      end
+
+      # @param chat [Hash]
+      # @return [Boolean] false too when the server cannot be asked
+      def sees_images?(chat)
+        profile, model = choice(chat)
+        @probe.call(profile.with(model: model)).images == "native"
+      rescue ModelUnavailableError
+        false
       end
 
       # Register a reply to stream; it starts when the browser opens the stream.
@@ -173,7 +213,7 @@ module Harness
         kept = []
         used = 0
         turns.reverse_each do |m, i|
-          cost = Model::Tokens.estimate(m["content"]) + Model::Tokens::MESSAGE_OVERHEAD
+          cost = Model::Tokens.estimate(m["content"]) + Model::Tokens::MESSAGE_OVERHEAD + (Array(m["images"]).size * IMAGE_TOKENS)
           break if used + cost > budget && !kept.empty?
 
           kept.unshift([m, i])
@@ -182,7 +222,21 @@ module Harness
         older = turns.take(turns.size - kept.size)
         out = [{ "role" => "system", "content" => system }]
         out << { "role" => "system", "content" => "Summary of the earlier conversation:\n#{summary(chat, older, profile)}" } unless older.empty?
-        out + kept.map { |m, _| { "role" => m["role"], "content" => m["content"].to_s } }
+        sees = kept.any? { |m, _| m["images"] } && sees_images?(chat)
+        out + kept.map { |m, _| { "role" => m["role"], "content" => content(m, sees) } }
+      end
+
+      # @param message [Hash]
+      # @param sees [Boolean] whether the model sees pictures (a chat may have switched to one that does not)
+      # @return [String, Array<Hash>] text, or text and pictures
+      def content(message, sees)
+        text = message["content"].to_s
+        images = Array(message["images"])
+        return text if images.empty?
+        return "#{text}\n\n#{UNSEEN}".strip unless sees
+
+        parts = images.map { |url| { "type" => "image_url", "image_url" => { "url" => url } } }
+        text.strip.empty? ? parts : [{ "type" => "text", "text" => text }, *parts]
       end
 
       # @return [String] cached in the chat until more messages fall out of the window

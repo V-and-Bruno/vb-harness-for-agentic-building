@@ -18,12 +18,12 @@ module Harness
       DEFAULT_CONTEXT = 8192
 
       Result = Data.define(:model_id, :context_tokens, :context_source, :structured_output, :tool_calls,
-                           :thinking_control, :reasoning, :prompt_tps, :gen_tps, :continuation)
+                           :thinking_control, :reasoning, :prompt_tps, :gen_tps, :continuation, :images)
 
       # Cache (de)serialisation and the plain-words summary shown after onboarding.
       class Result
         KEYS = %w[modelId contextTokens contextSource structuredOutput toolCalls thinkingControl reasoning
-                  promptTps genTps continuation].freeze
+                  promptTps genTps continuation images].freeze
 
         # @param raw [Hash] cached JSON
         # @return [Result]
@@ -39,8 +39,9 @@ module Harness
               thinking_control: Parse.enum!(h["thinkingControl"], "probe.thinkingControl", Wire::THINKING_OFF.keys),
               reasoning: Parse.enum!(h["reasoning"], "probe.reasoning", %w[separate inline none]),
               prompt_tps: tps.call("promptTps"), gen_tps: tps.call("genTps"),
-              # A cache written before this field existed fails here and is probed again.
-              continuation: Parse.enum!(h["continuation"], "probe.continuation", Wire::CONTINUE.keys))
+              # A cache written before one of these fields existed fails here and is probed again.
+              continuation: Parse.enum!(h["continuation"], "probe.continuation", Wire::CONTINUE.keys),
+              images: Parse.enum!(h["images"], "probe.images", %w[native none]))
         end
 
         # @return [Hash] JSON form, camelCase keys
@@ -54,6 +55,7 @@ module Harness
           json = structured_output == "prompt" ? "no (JSON by instruction)" : "yes"
           think = thinking_control == "none" ? "no thinking control found" : "thinking can be turned off"
           more = continuation == "none" ? "" : ", long replies can be continued"
+          more += ", can see images" if images == "native"
           "#{ctx} context, JSON mode: #{json}, tools: #{tool_calls == 'native' ? 'yes' : 'no'}, #{think}#{more}"
         end
       end
@@ -72,6 +74,14 @@ module Harness
         "parameters" => { "type" => "object", "properties" => { "value" => { "type" => "integer" } },
                           "required" => ["value"] }
       } }.freeze
+      # Two pictures of one colour each. A server that ignores pictures, or a model that guesses, does not name both.
+      IMAGE_PROMPT = "Which one colour fills this picture? Answer with one word: red, orange, yellow, green, blue, purple, black or white."
+      IMAGES = {
+        "yellow" => "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAATklEQVR42u3PQQkAAAgEsOsf1BpeBN/CYAWWnbwWAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB" \
+                    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAYFLAfz8UcNcZvE9AAAAAElFTkSuQmCC",
+        "green" => "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAATUlEQVR42u3PQQkAAAgEsItjYvNeBN/CYAWW7PwmICAgICAgICAgICAgICAgICAgICAgICAg" \
+                   "ICAgICAgICAgICAgICAgICAgICAgIHApelbgphNCpX0AAAAASUVORK5CYII="
+      }.freeze
       FILLER = "The quick brown fox jumps over the lazy dog near the quiet river bank. "
       COUNT_PROMPT = "Count from 1 to 30, separated by single spaces. Reply with only the numbers."
       COUNT_START = "1 2 3 4 5 6 7 8 9 10 11 12"
@@ -140,7 +150,7 @@ module Harness
         Result.new(model_id: id, context_tokens: context, context_source: source,
                    structured_output: structured_of(profile, id, off), tool_calls: tools_of(profile, id, off),
                    thinking_control: control, reasoning: reasoning, prompt_tps: prompt_tps, gen_tps: gen_tps,
-                   continuation: continuation_of(profile, id, off))
+                   continuation: continuation_of(profile, id, off), images: images_of(profile, id, off))
       end
 
       # @return [Result]
@@ -264,6 +274,18 @@ module Harness
           return mode if msg && Wire.split_thinking(msg["content"]).first.match?(/\A13\b/)
         end
         "none"
+      end
+
+      # Whether the model sees pictures: it names the colour of both, and no other colour.
+      # @return [String] native or none
+      def images_of(profile, id, off)
+        colours = IMAGE_PROMPT[/: (.*)\./, 1].split(/, | or /)
+        sees = IMAGES.all? do |colour, data|
+          content = [{ "type" => "text", "text" => IMAGE_PROMPT }, { "type" => "image_url", "image_url" => { "url" => "data:image/png;base64,#{data}" } }]
+          msg = message(chat(profile, id, content, off, 60))
+          msg && Wire.split_thinking(msg["content"]).first.downcase.scan(/[a-z]+/).select { |w| colours.include?(w) }.uniq == [colour]
+        end
+        sees ? "native" : "none"
       end
 
       # @return [Array(Float, Float)] prompt and generation tokens per second (nil when unknown)

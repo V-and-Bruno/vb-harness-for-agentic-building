@@ -90,7 +90,7 @@ module Harness
 
       ROUTES = [
         ["GET", %r{\A/\z}, :index], ["GET", %r{\A/theme\.css\z}, :theme], ["GET", %r{\A/api/state\z}, :state],
-        ["GET", %r{\A/api/chats\z}, :chat_list], ["GET", %r{\A/api/appearance\z}, :appearance],
+        ["GET", %r{\A/api/abilities\z}, :abilities], ["GET", %r{\A/api/chats\z}, :chat_list], ["GET", %r{\A/api/appearance\z}, :appearance],
         ["POST", %r{\A/api/appearance\z}, :appearance_post], ["POST", %r{\A/api/runs/([\w-]+)/resume\z}, :run_resume],
         ["POST", %r{\A/api/runs/([\w-]+)/fix\z}, :run_fix],
         ["GET", %r{\A/api/previews\z}, :previews], ["POST", %r{\A/api/previews/(start|stop)\z}, :preview_post],
@@ -130,6 +130,7 @@ module Harness
         when :appearance_post then Response.json(Appearance.save(@home, body(req)).to_json_hash)
         when :state then Response.json(state)
         when :chat_list then Response.json(chat_list)
+        when :abilities then Response.json(@conversation ? @conversation.abilities(model_choice(req.query.slice("profile", "model"))) : { "images" => false })
         when :run_resume then Response.json({ "run" => builds_for(args[0]).resume(args[0]) })
         when :previews then Response.json(@previews.list)
         when :preview_post then preview_post(args[0], body(req))
@@ -385,7 +386,9 @@ module Harness
       def send_message(id, data)
         text = data["text"].to_s
         mode = MODES.include?(data["mode"]) ? data["mode"] : "chat"
-        raise ParseError, "the message is empty" if text.strip.empty?
+        images = Conversation.images(data["images"])
+        raise ParseError, "pictures go to Chat: ask for a description there, then build from it" if mode == "build" && !images.empty?
+        raise ParseError, "the message is empty" if text.strip.empty? && images.empty?
 
         config!
         @chats.get(id)
@@ -399,7 +402,9 @@ module Harness
           @chats.append(id, { "role" => "build", "runId" => run, "project" => project.name })
           Response.json({ "run" => run })
         else
-          @chats.append(id, { "role" => "user", "content" => text, "mode" => "chat" })
+          raise ParseError, "this model cannot see pictures" unless images.empty? || @conversation.sees_images?(@chats.get(id))
+
+          @chats.append(id, { "role" => "user", "content" => text, "mode" => "chat", "images" => images.empty? ? nil : images }.compact)
           Response.json({ "stream" => @conversation.prepare(id) })
         end
       end

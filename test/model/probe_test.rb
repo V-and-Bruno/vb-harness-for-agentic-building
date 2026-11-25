@@ -18,12 +18,14 @@ class ProbeTest < Minitest::Test
   # and what it says about an oversize prompt.
   # continuation: nil (restarts a started reply), "prefill" (continues one) or "continue_final_message" (continues
   # one when asked with that field).
-  def fake(schema: true, object: true, tools: true, thinking: nil, overflow: nil, continuation: nil,
+  def fake(schema: true, object: true, tools: true, thinking: nil, overflow: nil, continuation: nil, images: nil,
            models: [{ "id" => "test-model" }])
     Fake.new(models: models) do |body, _n|
       prompt = body["messages"].last["content"]
       fmt = body.dig("response_format", "type")
-      if body["messages"].last["role"] == "assistant"
+      if prompt.is_a?(Array)
+        images ? Fake.ok(images.call(prompt)) : Fake.error(400, "image input is not supported")
+      elsif body["messages"].last["role"] == "assistant"
         goes_on = continuation == "prefill" || (continuation && body["continue_final_message"] == true)
         Fake.ok(goes_on ? "13 14 15 16" : "1 2 3 4 5 6")
       elsif prompt.start_with?("x x x")
@@ -188,6 +190,25 @@ class ProbeTest < Minitest::Test
     assert_equal "16K context, JSON mode: yes, tools: no, thinking can be turned off", r.describe
     assert_equal "16K context, JSON mode: yes, tools: yes, thinking can be turned off, long replies can be continued",
                  r.with(tool_calls: "native", continuation: "prefill").describe
+  end
+
+  # --- pictures ---
+
+  COLOUR_OF = ->(content) { M::Probe::IMAGES.find { |_, data| content.last.dig("image_url", "url").end_with?(data) }.first }
+
+  def test_a_model_that_names_both_pictures_sees_images
+    srv = fake(images: ->(c) { "The picture is #{COLOUR_OF.call(c).capitalize}." })
+    r = probe_for(srv)
+    assert_equal "native", r.images
+    assert_includes r.describe, "can see images"
+    assert_equal r, M::Probe::Result.parse(r.to_json_hash), "cached as it was found"
+  end
+
+  def test_a_server_that_refuses_ignores_or_guesses_at_pictures_does_not
+    assert_equal "none", probe_for(fake).images
+    assert_equal "none", probe_for(fake(images: ->(_) { "Yellow" }, models: [{ "id" => "guesses" }])).images, "the same answer for both is a guess"
+    assert_equal "none", probe_for(fake(images: ->(_) { "It could be red, orange, yellow or green." }, models: [{ "id" => "lists" }])).images
+    assert_equal "none", probe_for(fake(images: ->(_) { "I cannot see pictures." }, models: [{ "id" => "says-so" }])).images
   end
 
   # --- continuing a started reply ---
