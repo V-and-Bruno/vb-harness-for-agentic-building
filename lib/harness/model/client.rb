@@ -109,6 +109,11 @@ module Harness
       end
 
       # @param role [Symbol] one of ROLES
+      # @return [Integer] tokens a request may hold once the room for the answer is set aside
+      # @raise [ModelUnavailableError]
+      def prompt_room(role) = capabilities(role).context_tokens - @config.profile_for(role).max_output_tokens
+
+      # @param role [Symbol] one of ROLES
       # @param messages [Messages]
       # @param label [String] step name, used in records and logs
       # @param parser [#call, nil] e.g. Plan.method(:parse); required when a JSON reply is expected

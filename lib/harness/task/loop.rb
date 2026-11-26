@@ -110,6 +110,14 @@ module Harness
       end
 
       CONTINUE_AT_GATES = %w[applied gating fixing reviewing committing].freeze
+      # What the next try is told about why the last one stopped.
+      STOPPED_WHY = {
+        "agent.no_finish" => "It stopped calling tools without calling finish.",
+        "agent.steps_exhausted" => "It used all of its tool calls.",
+        "agent.stuck" => "It kept repeating one call that gave the same result every time. Its approach does not work: question what it assumed, " \
+                         "and check that what it wrote is valid.",
+        "model.context_overflow" => "Its conversation grew too long to go on."
+      }.freeze
       # How much of the last attempt a recovery try is shown.
       RESUME_CALLS = 10
       RESUME_DIFF_CHARS = 6000
@@ -307,14 +315,22 @@ module Harness
         rescue ModelOutputError => e
           emit("task.implement", "rejected", reason: e.reason, detail: e.message[0, 300])
           raise Blocked.new(e.reason, e.message)
+        rescue ContextOverflowError => e
+          # A new conversation starts small, so this is a stall like any other: the ladder gets its tries.
+          emit("task.implement", "rejected", reason: "model.context_overflow", detail: e.message[0, 300])
+          nil
         ensure
           @touched.merge(toolbox.touched)
           @created.merge(toolbox.created)
         end
         save("applied")
+        return recover(toolbox, "model.context_overflow", nil) if result.nil?
         return result if result.finished
 
-        reason = result.exhausted ? "agent.steps_exhausted" : "agent.no_finish"
+        reason = if result.stuck then "agent.stuck"
+                 elsif result.exhausted then "agent.steps_exhausted"
+                 else "agent.no_finish"
+                 end
         if proven?
           emit("task.implement", "accepted", subject: "passed its acceptance test without calling finish", detail: reason)
           return result
@@ -360,9 +376,9 @@ module Harness
         end
         diff = @ctx.worktree.patch(context: 1)
         diff = "#{diff[0, RESUME_DIFF_CHARS]}\n[diff cut at #{RESUME_DIFF_CHARS} characters]" if diff.size > RESUME_DIFF_CHARS
-        said = stopped.text.to_s.strip
+        said = stopped&.text.to_s.strip
         Prompts.render("agent_resume_user", task: task_text, request: request_text, done: @done,
-                                            out_of_steps: reason == "agent.steps_exhausted",
+                                            why: STOPPED_WHY.fetch(reason, STOPPED_WHY["agent.no_finish"]),
                                             last_words: said.empty? ? nil : Untrusted.fence(said[0, 600]),
                                             files: @touched.to_a.sort, diff: diff.strip.empty? ? nil : Untrusted.fence(diff),
                                             calls: calls.empty? ? nil : Untrusted.fence(calls.join("\n")),

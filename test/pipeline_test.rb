@@ -183,6 +183,46 @@ class PipelineTest < Minitest::Test
     assert(events.any? { |e| e["stage"] == "plan" && e["kind"] == "retried" })
   end
 
+  # A field plan had the right task on the right file, listed as both new and changed, and the whole run was lost.
+  def test_a_file_listed_as_new_and_changed_is_read_from_the_disk
+    events = []
+    log = Object.new
+    log.define_singleton_method(:emit) { |**e| events << e }
+    planner = Harness::Plan::Planner.new(client: nil, config: F.config("http://127.0.0.1:1"), events: log)
+    root = File.join(@tmp, "tidy")
+    FileUtils.mkdir_p(File.join(root, "src"))
+    File.write(File.join(root, "src", "there.ts"), "x\n")
+    task = { "id" => "T1", "title" => "T", "intent" => "I", "acceptance" => [{ "kind" => "gate", "gate" => "typecheck" }],
+             "files" => { "create" => ["src/there.ts", "src/new.ts", "src/only.ts"], "modify" => ["src/there.ts", "src/new.ts"] } }
+    tidy = planner.method(:tidied).unbind.bind(planner)
+    out = tidy.call(Harness::Plan::PlanParser.parse({ "tasks" => [task] }), root).tasks.first.files
+    assert_equal [%w[src/new.ts src/only.ts], %w[src/there.ts]], [out.create, out.modify]
+    assert_equal [["listed as new and changed", "T1: src/there.ts, src/new.ts"]], events.map { |e| e.values_at(:subject, :detail) }
+    clean = Harness::Plan::PlanParser.parse({ "tasks" => [task.merge("files" => { "create" => ["src/there.ts"] })] })
+    assert_same clean, tidy.call(clean, root), "a file listed only as new is left for the checks"
+  end
+
+  # Field replans were all lost to one habit: a first task that only inspects. It is folded into the task that writes.
+  def test_a_task_that_only_reads_is_folded_into_the_task_that_writes
+    events = []
+    log = Object.new
+    log.define_singleton_method(:emit) { |**e| events << e }
+    planner = Harness::Plan::Planner.new(client: nil, config: F.config("http://127.0.0.1:1"), events: log)
+    fold = ->(tasks) { planner.method(:tidied).unbind.bind(planner).call(Harness::Plan::PlanParser.parse({ "tasks" => tasks }), @tmp) }
+    base = { "title" => "T", "acceptance" => [{ "kind" => "gate", "gate" => "typecheck" }] }
+    look = base.merge("id" => "T1", "intent" => "Find why PATH is lost.", "files" => { "read" => ["lib/env.rb", "test/a.rb"] })
+    fix = base.merge("id" => "T2", "intent" => "Fix the test.", "dependsOn" => ["T1"], "files" => { "modify" => ["test/a.rb"] })
+    last = base.merge("id" => "T3", "intent" => "Docs.", "dependsOn" => ["T2"], "files" => { "modify" => ["README.md"] })
+    out = fold.call([look, fix, last])
+    assert_equal %w[T2 T3], out.tasks.map(&:id)
+    t2 = out.tasks.first
+    assert_equal [[], ["lib/env.rb"], "Fix the test.\nFirst: Find why PATH is lost."], [t2.depends_on, t2.files.read, t2.intent]
+    assert_equal ["T2"], out.tasks.last.depends_on
+    assert_equal [["inspection folded into the task that writes", "T1 -> T2"]], events.map { |e| e.values_at(:subject, :detail) }
+    only = fold.call([look])
+    assert_equal ["T1"], only.tasks.map(&:id), "a plan where nothing writes is left for the checks"
+  end
+
   def test_replans_are_capped_and_the_plan_goes_to_the_user
     bad = t1(acceptance: [{ "kind" => "assert", "text" => "looks fine" }])
     fixture({ "plan" => F.plan_reply([bad]) })
