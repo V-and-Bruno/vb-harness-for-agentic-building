@@ -19,6 +19,7 @@ module Harness
         "agent.tool_error" => "an agent tool call failed",
         "agent.steps_exhausted" => "the agent ran out of steps before finishing",
         "agent.rounds_exhausted" => "the checks still failed after the agent's last round",
+        "agent.stuck" => "the agent kept repeating one step that did not work",
         "agent.no_finish" => "the agent stopped without finishing",
         "agent.no_acceptance_test" => "the acceptance test was not written",
         "plan.too_many_files" => "task touches too many files",

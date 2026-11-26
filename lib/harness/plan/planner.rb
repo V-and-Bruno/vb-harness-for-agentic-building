@@ -92,7 +92,7 @@ module Harness
                    Prompts.render("planner_output_retry", reason: e.message[0, 300])
             next
           end
-          plan = linked(plan)
+          plan = linked(tidied(plan, root))
           issues = Checks.run(plan, root: root, max_files: @config.limits.max_files_per_task, protected: stack.protected_paths,
                                     gates: stack.gates.keys, budget: check_budget, unavailable: unavailable,
                                     test_gates: test_gates, request: request)
@@ -108,6 +108,67 @@ module Harness
       end
 
       private
+
+      # A file a task lists under both create and modify says one thing twice; only the disk can tell which. A field run
+      # lost its whole plan, the right task on the right file, to this slip. Anything else is left for the checks.
+      # @param plan [Plan]
+      # @param root [String]
+      # @return [Plan]
+      def tidied(plan, root)
+        fixed = []
+        tasks = plan.tasks.map do |t|
+          both = t.files.create & t.files.modify
+          next t if both.empty?
+
+          there, missing = both.partition { |rel| on_disk?(root, rel) }
+          fixed << "#{t.id}: #{both.join(', ')}"
+          t.with(files: t.files.with(create: t.files.create - there, modify: t.files.modify - missing))
+        end
+        unless fixed.empty?
+          @events.emit(stage: "plan", kind: "accepted", subject: "listed as new and changed", detail: fixed.join("; ")[0, 300])
+          plan = plan.with(tasks: tasks)
+        end
+        folded(plan)
+      end
+
+      # A task that changes no files (an inspection) cannot be proven by a gate. When another task writes, the
+      # inspection is folded into it (its reading and its intent) instead of rejecting the plan: field runs lost every
+      # replan to this one habit. A plan where nothing writes is left for the checks.
+      # @param plan [Plan]
+      # @return [Plan]
+      def folded(plan)
+        idle, writers = plan.tasks.partition { |t| writes(t).empty? }
+        return plan if idle.empty? || writers.empty?
+
+        gone = idle.to_h { |t| [t.id, t] }
+        into = idle.to_h do |t|
+          after = plan.tasks.drop(plan.tasks.index(t) + 1)
+          target = writers.find { |w| w.depends_on.include?(t.id) } || after.find { |w| !gone.key?(w.id) } || writers.first
+          [t.id, target.id]
+        end
+        tasks = writers.map do |w|
+          mine = idle.select { |t| into[t.id] == w.id }
+          deps = w.depends_on.flat_map { |d| gone.key?(d) ? gone[d].depends_on : [d] }.uniq.reject { |d| d == w.id || gone.key?(d) }
+          next w.with(depends_on: deps) if mine.empty?
+
+          read = (w.files.read + mine.flat_map { |t| t.files.read }).uniq - writes(w)
+          intent = ([w.intent] + mine.map { |t| "First: #{t.intent}" }).join("\n")
+          w.with(depends_on: deps, intent: intent, files: w.files.with(read: read))
+        end
+        @events.emit(stage: "plan", kind: "accepted", subject: "inspection folded into the task that writes",
+                     detail: into.map { |from, to| "#{from} -> #{to}" }.join(", ")[0, 300])
+        plan.with(tasks: tasks)
+      end
+
+      # @return [Array<String>]
+      def writes(task) = task.files.create + task.files.modify + task.files.delete
+
+      # @return [Boolean]
+      def on_disk?(root, rel)
+        File.exist?(Repo::Paths.resolve_in_worktree(root, rel))
+      rescue PathError
+        false
+      end
 
       # @param plan [Plan]
       # @return [Plan] with the dependencies the planner left out, which the events record

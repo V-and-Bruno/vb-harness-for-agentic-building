@@ -160,6 +160,39 @@ class AgentModeTest < Minitest::Test
     assert_equal 4 + 4 + 2, asked, "the narrower try gets half the steps"
   end
 
+  def test_an_agent_that_repeats_itself_gets_a_new_conversation_that_says_so
+    @server = Fake.new do |body, _n|
+      next F::NO_FINDINGS unless body["messages"].first["content"].start_with?(TASK_AGENT)
+
+      if body["messages"].none? { |m| m["content"].to_s.start_with?("An earlier attempt") }
+        Fake.ok("", tool_calls: [call("edit_file", { "path" => "src/lib/price.ts", "search" => "not there", "replace" => "x" })])
+      elsif body["messages"].none? { |m| m["role"] == "tool" }
+        Fake.ok("", tool_calls: [call("edit_file", { "path" => "src/lib/price.ts", "search" => "  return n;", "replace" => "  return n * 2;" })])
+      else Fake.ok("", tool_calls: [call("finish", { "summary" => "Doubled." })])
+      end
+    end
+    t1, _setup, store = run_with("r-stuck")
+    assert_equal "done", t1.status, t1.detail
+    assert_equal [["recovery: fresh start", "agent.stuck"]], recovery_events(store).map { |e| e.values_at("subject", "detail") }
+    resumed = @server.chat_bodies.find { |b| b["messages"].last["content"].to_s.start_with?("An earlier attempt") }["messages"].last["content"]
+    assert_includes resumed, "It kept repeating one call"
+  end
+
+  def test_a_conversation_the_server_refuses_for_its_size_goes_to_the_ladder
+    @server = Fake.new do |body, _n|
+      next F::NO_FINDINGS unless body["messages"].first["content"].start_with?(TASK_AGENT)
+
+      if body["messages"].none? { |m| m["content"].to_s.start_with?("An earlier attempt") } then Fake.error(400, "the request exceeds the available context size (n_ctx 4096)")
+      elsif body["messages"].none? { |m| m["role"] == "tool" }
+        Fake.ok("", tool_calls: [call("edit_file", { "path" => "src/lib/price.ts", "search" => "  return n;", "replace" => "  return n * 2;" })])
+      else Fake.ok("", tool_calls: [call("finish", { "summary" => "Doubled." })])
+      end
+    end
+    t1, _setup, store = run_with("r-over")
+    assert_equal "done", t1.status, t1.detail
+    assert_equal ["model.context_overflow"], recovery_events(store).map { |e| e["detail"] }
+  end
+
   def test_max_recoveries_zero_blocks_at_once
     @server = Fake.new do |body, _n|
       body["messages"].first["content"].start_with?(TASK_AGENT) ? Fake.ok("", tool_calls: [call("list_dir", { "path" => "." })]) : F::NO_FINDINGS
