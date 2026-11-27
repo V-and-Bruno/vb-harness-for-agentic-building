@@ -1061,3 +1061,13 @@ for an hour.
 - **A task that only inspects is folded in.** Two field runs lost every replan to a first task that changed no files.
   When another task writes, the inspection's reading and intent move into the task that depends on it (or the next one
   that writes), and dependencies on it pass through. A plan where nothing writes is still refused.
+
+## Provider buttons get a plain, filtered environment (0.1.78)
+
+Every provider button in the app (Ollama list and pull, LM Studio load) answered 500 with "env: expected hash, got
+Object": the app kept Ruby's `ENV`, which is not a Hash, and handed it to `Exec`. The tests gave the app a plain Hash,
+so they never saw it.
+
+- **The app keeps a plain copy.** `UI::App` turns what it is given into a Hash once, so every later call gets one.
+- **A provider tool gets the gates' environment.** It used to get the whole environment, keys included. It now gets the
+  same base as gates (I5) plus its own `OLLAMA_*` / `LMS_*` settings, and nothing that looks like a key or token (I12).

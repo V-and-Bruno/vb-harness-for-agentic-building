@@ -5,6 +5,7 @@
 require "json"
 require_relative "../errors"
 require_relative "../exec"
+require_relative "../gates/env"
 
 module Harness
   module Providers
@@ -14,6 +15,8 @@ module Harness
     module Actions
       MODEL = %r{\A[\w.:/@-]{1,200}\z}
       # kind => action => [argv after the tool, takes a model name?, timeout in seconds]
+      # Variables the provider tools read for their own settings.
+      TOOL_ENV = /\A(?:OLLAMA|LMS|LMSTUDIO|LM_STUDIO)_/i
       LIST = {
         "lmstudio" => { "server_start" => [%w[server start], false, 60], "ls" => [%w[ls --json], false, 30],
                         "load" => [%w[load], true, 600], "ps" => [%w[ps], false, 30] },
@@ -41,17 +44,27 @@ module Harness
       # @param kind [String]
       # @param action [String]
       # @param model [String, nil]
-      # @param env [Hash{String=>String}]
+      # @param env [Hash{String=>String}, ENV] the harness's environment; the tool gets a filtered copy (child_env)
       # @param chdir [String]
       # @return [Outcome]
       # @raise [ParseError]
       def self.run(cli:, kind:, action:, env:, chdir:, model: nil)
         args = argv(kind, action, model)
-        r = Exec.run(cli + args, chdir: chdir, env: env, timeout: LIST.dig(kind, action)[2], max_output: 65_536)
+        r = Exec.run(cli + args, chdir: chdir, env: child_env(env), timeout: LIST.dig(kind, action)[2], max_output: 65_536)
         text = "#{r.stdout}\n#{r.stderr}".strip
         Outcome.new(ok: r.success?, output: text.size > 4000 ? text[-4000..] : text)
       rescue CommandNotFoundError, UnsafeArgumentError => e
         Outcome.new(ok: false, output: e.message)
+      end
+
+      # The tool's own settings (OLLAMA_HOST, OLLAMA_MODELS, ...) on top of the gates' base environment; anything
+      # that looks like a key or token stays behind, as it does for gates (I5, I12).
+      # @param env [Hash{String=>String}, ENV]
+      # @return [Hash{String=>String}]
+      def self.child_env(env)
+        source = env.to_h
+        own = source.keys.select { |k| k.match?(TOOL_ENV) && !k.match?(Gates::Env::SECRET) }
+        Gates::Env.build(source, allow: own)
       end
 
       # Models LM Studio has downloaded, from `lms ls --json`.

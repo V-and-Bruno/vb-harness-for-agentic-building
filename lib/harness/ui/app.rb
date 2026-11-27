@@ -46,7 +46,7 @@ module Harness
 
       # @param config_path [String] config.json; chats/, runs/ and .cache/ live next to it
       # @param token [String] embedded in the page for POST requests
-      # @param env [Hash{String=>String}]
+      # @param env [Hash{String=>String}, ENV]
       # @param pipeline_for [#call] (config, home[, env]) -> Pipeline; the demo passes its own env (Demo.git_env)
       # @param http [Model::Http]
       # @param clis [Hash{String=>Array<String>}] provider CLIs to use instead of looking (tests)
@@ -55,7 +55,8 @@ module Harness
         @config_path = File.expand_path(config_path)
         @home = File.dirname(@config_path)
         @token = token
-        @env = env
+        # A plain copy: Ruby's ENV is not a Hash, and Exec refuses anything else.
+        @env = env.to_h
         @http = http
         @clis = clis
         @urls = urls
