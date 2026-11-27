@@ -24,6 +24,7 @@ class UIAppTest < Minitest::Test
     when /\\Aload / then puts "loaded \#{ARGV.last}"
     when /\\Apull / then puts "pulled \#{ARGV.last}"
     when "server start" then puts "server started"
+    when "list" then puts "key=\#{ENV.key?('HARNESS_TEST_API_KEY')} host=\#{ENV['OLLAMA_HOST']}"
     else puts "ran \#{ARGV.join(' ')}"
     end
   RUBY
@@ -381,6 +382,23 @@ data: [DONE]
     assert_equal "export const rate = 0.25;
 ", File.read(File.join(store.read_run["worktree"], "src/lib/tax.ts"))
   end
+
+# A field run: every provider button answered 500 ("env: expected hash, got Object"), because the app was
+# given Ruby's ENV, which is not a Hash. The tool also gets only a filtered environment, never a key.
+def test_provider_actions_work_with_the_real_env_and_never_get_a_key
+  script = File.join(@tmp, "fake_cli.rb")
+  File.write(script, FAKE_CLI)
+  ENV["HARNESS_TEST_API_KEY"] = "not-a-real-key"
+  ENV["OLLAMA_HOST"] = "127.0.0.1:9"
+  @ollama = Fake.new(routes: { "/api/tags" => [200, { "models" => [] }] }, models: [])
+  start(env: ENV, clis: { "ollama" => [RbConfig.ruby, script] }, urls: { "lmstudio" => "http://127.0.0.1:9/v1", "ollama" => @ollama.base_url.delete_suffix("/v1") })
+  r = post("/api/providers/action", { "kind" => "ollama", "action" => "list" })
+  assert_equal 200, r.status, r.body
+  assert_equal "key=false host=127.0.0.1:9", r.json["output"]
+ensure
+  ENV.delete("HARNESS_TEST_API_KEY")
+  ENV.delete("OLLAMA_HOST")
+end
 
   def test_provider_onboarding_with_fake_servers_and_tools
     @lms = Fake.new(models: [])
