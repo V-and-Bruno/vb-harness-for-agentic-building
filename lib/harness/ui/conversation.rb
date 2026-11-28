@@ -138,13 +138,14 @@ module Harness
 
         chat = @chats.get(job[:chat])
         profile, model = choice(chat)
+        active = profile.with(model: model)
         text = +""
         thinking = +""
         timer = ThinkingTimer.new(@clock)
         last = chat["messages"].reverse.find { |m| m["role"] == "user" } || {}
         sse.event("notice", { "text" => last["designError"] }) if last["designError"]
-        tools = reading(chat, last, profile)
-        messages = fit(chat, profile, tools ? last["reads"] : nil)
+        tools = reading(chat, last, active)
+        messages = fit(chat, active, tools ? last["reads"] : nil)
         calls = []
         reply = lambda do |off|
           calls.clear
@@ -162,7 +163,7 @@ module Harness
         loop do
           said = text.size
           finish = reply.call(off)
-          control = out_of_room?(finish, text[said..]) && calls.empty? && !retried ? @probe.call(profile).thinking_control : "none"
+          control = out_of_room?(finish, text[said..]) && calls.empty? && !retried ? @probe.call(active).thinking_control : "none"
           if control != "none"
             # Like the model client: a reply that spent its whole allowance thinking is asked again once, thinking off.
             retried = true

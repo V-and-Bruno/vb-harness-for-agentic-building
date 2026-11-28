@@ -44,9 +44,9 @@
       <section id="settings" class="scroll" hidden></section>
       <section id="project-notice" class="project-notice" hidden aria-live="polite"></section>
       <footer id="composer-wrap" class="composer-wrap">
-        <div class="composer">
+        <div id="composer" class="composer">
           <div id="pictures" class="pictures" hidden></div>
-          <textarea id="input" rows="3" placeholder="Ask anything: plan a feature, compare approaches…" aria-label="Message"></textarea>
+          <textarea id="input" rows="1" placeholder="Ask anything: plan a feature, compare approaches…" aria-label="Message"></textarea>
           <div class="composer-row">
             <div class="seg" role="radiogroup" aria-label="Mode">
               <button type="button" data-mode="chat" class="on" role="radio" aria-checked="true"><span data-icon="chat"></span>Chat</button>
@@ -61,6 +61,7 @@
             <button id="picture-add" class="btn ghost sm" type="button" hidden title="Attach a picture (or paste one)"><span data-icon="plus"></span>Picture</button>
             <input id="picture-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
             <span class="grow"></span>
+            <span id="send-hint" class="kbd"></span>
             <button id="stop" class="btn sm" type="button" hidden><span data-icon="stop"></span>Stop</button>
             <button id="send" class="send" type="button" aria-label="Send"><span data-icon="up"></span><span id="send-label"></span></button>
           </div>

@@ -20,8 +20,8 @@ class UIAppTest < Minitest::Test
   # Stands in for lms and ollama: answers the fixed subcommands.
   FAKE_CLI = <<~RUBY
     case ARGV.join(" ")
-    when "ls --json" then puts '[{"modelKey":"local/coder-7b"},{"modelKey":"bad key"}]'
-    when /\\Aload / then puts "loaded \#{ARGV.last}"
+    when "ls --json" then puts '[{"type":"llm","modelKey":"local/coder-7b"},{"type":"embedding","modelKey":"local/embed-v1"},{"modelKey":"bad key"}]'
+    when /\\Aload -y / then puts "loaded \#{ARGV.last}"
     when /\\Apull / then puts "pulled \#{ARGV.last}"
     when "server start" then puts "server started"
     when "list" then puts "key=\#{ENV.key?('HARNESS_TEST_API_KEY')} host=\#{ENV['OLLAMA_HOST']}"
@@ -81,6 +81,18 @@ class UIAppTest < Minitest::Test
     assert_empty get("/api/chats").json
     assert_equal 404, get("/api/chats/#{id}").status
     assert_equal 404, get("/api/chats/..%2Fconfig").status
+  end
+
+  def test_chat_probes_the_switched_model_not_an_unloaded_default
+    @model = Fake.new(models: [{ "id" => "model-b" }]) { |body, _n| body["stream"] ? sse_reply({ "content" => "From B." }) : Fake.ok("OK") }
+    cfg = RR.raw_config(@model.base_url)
+    cfg["profiles"]["default"]["model"] = "unloaded-a"
+    start(config: cfg)
+    id = post("/api/chats", { "model" => { "profile" => "default", "model" => "model-b" } }).json["id"]
+    stream = post("/api/chats/#{id}/send", { "text" => "Hello", "mode" => "chat" }).json["stream"]
+    events = get("/api/streams/#{stream}").events
+    assert_equal "From B.", events.select { |e, _| e == "text" }.map { |_, d| d["text"] }.join
+    assert_equal "done", events.last.first
   end
 
   # Settings → How runs work → Advanced configuration: the whole config.json, written only when it is valid.

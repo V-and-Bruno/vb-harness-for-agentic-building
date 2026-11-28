@@ -19,7 +19,7 @@ module Harness
       TOOL_ENV = /\A(?:OLLAMA|LMS|LMSTUDIO|LM_STUDIO)_/i
       LIST = {
         "lmstudio" => { "server_start" => [%w[server start], false, 60], "ls" => [%w[ls --json], false, 30],
-                        "load" => [%w[load], true, 600], "ps" => [%w[ps], false, 30] },
+                        "load" => [%w[load -y], true, 600], "ps" => [%w[ps], false, 30] },
         "ollama" => { "list" => [%w[list], false, 30], "pull" => [%w[pull], true, 3600], "ps" => [%w[ps], false, 30] }
       }.freeze
 
@@ -67,12 +67,16 @@ module Harness
         Gates::Env.build(source, allow: own)
       end
 
-      # Models LM Studio has downloaded, from `lms ls --json`.
+      # Models LM Studio has downloaded, from `lms ls --json` (excluding embedding models).
       # @param output [String]
       # @return [Array<String>] model keys
       def self.lms_models(output)
         list = JSON.parse(output[/\[.*\]/m].to_s)
-        Array(list).filter_map { |m| (m["modelKey"] || m["path"]) if m.is_a?(Hash) }.select { |k| k.is_a?(String) && k.match?(MODEL) }
+        Array(list).filter_map do |m|
+          next unless m.is_a?(Hash) && m["type"] != "embedding"
+
+          m["modelKey"] || m["path"]
+        end.select { |k| k.is_a?(String) && k.match?(MODEL) }
       rescue JSON::ParserError
         []
       end

@@ -1071,3 +1071,18 @@ so they never saw it.
 - **The app keeps a plain copy.** `UI::App` turns what it is given into a Hash once, so every later call gets one.
 - **A provider tool gets the gates' environment.** It used to get the whole environment, keys included. It now gets the
   same base as gates (I5) plus its own `OLLAMA_*` / `LMS_*` settings, and nothing that looks like a key or token (I12).
+
+## Easier local-model onboarding, prompt bar polish, and lattice loader (0.1.79)
+
+- **Switched models are probed under their own id.** When a chat switched to another model on the same profile,
+  `UI::Conversation#run` still probed the profile's default model for context size, tool budget, and thinking control;
+  if the default model had been unloaded, chat failed. It now probes `profile.with(model: model)`.
+- **LM Studio `load` and `ls` work cleanly for beginners.** `lms load` now passes `-y` so it does not stall waiting
+  for confirmation when multiple variants exist, and `lms_models` skips `"type": "embedding"` entries. In Settings →
+  Models, "Show downloaded models" renders clean model rows instead of raw JSON, and "Scan again" re-checks local
+  servers without a page reload. The Welcome screen offers a one-click "Use <model>" button when a local server is
+  already running with a loaded model.
+- **Prompt bar and lattice loader.** The composer keeps its `16px` radius with a compact auto-growing input, armed
+  send state, and a vanilla SVG arrow-to-stop morph while streaming. Loading stages (waiting/thinking in Chat, active
+  build stage in `.nowbar`, scanning/probing models, setup checks, and preview startup) use a zero-dependency 3×3
+  orbit lattice loader with live stopwatch and done/error marks, respecting `prefers-reduced-motion`.
